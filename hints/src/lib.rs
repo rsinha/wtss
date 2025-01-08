@@ -144,14 +144,12 @@ impl HinTS {
         n: usize,
         params: &UniversalParams<Curve>,
         w: &Vec<F>,
-        sk: &Vec<F>
+        epk: &Vec<ExtendedPublicKey>
     ) -> (VerificationKey, AggregationKey)
     {
         let mut weights = w.clone();
-        let mut sk = sk.clone();
     
-        //last element must be 0
-        sk.push(F::from(0));
+        //last element must be 0 for the math to work
         weights.push(F::from(0));
     
         let w_of_x = utils::interpolate_poly_over_mult_subgroup(&weights);
@@ -163,22 +161,8 @@ impl HinTS {
         let mut qx_mul_tau_contributions : Vec<G1> = vec![Default::default(); n];
         let mut pks : Vec<G1> = vec![Default::default(); n];
         let mut sk_l_of_tau_coms: Vec<G2> = vec![Default::default(); n];
-        
-        //collect the setup phase material from all parties
-        let all_parties_setup = crossbeam::scope(|s| {
-            let mut threads = Vec::new();
-            for i in 0..n {
-                let idx = i.clone();
-                let n = n.clone();
-                let sk = sk[idx];
-                let thread_i = s.spawn(move |_| Self::hint_gen(&params, n, idx, &sk));
-                threads.push(thread_i);
-            }
     
-            threads.into_iter().map(|t| t.join().unwrap()).collect::<Vec<_>>()
-        }).unwrap();
-    
-        for hint in all_parties_setup {
+        for hint in epk {
             //verify hint
             Self::verify_hint(params, &hint);
             //extract necessary items for pre-processing
@@ -346,7 +330,7 @@ impl HinTS {
         }
     }
 
-    pub fn verify(vp: &VerificationKey, π: &ThresholdSignature) {
+    pub fn verify(vp: &VerificationKey, π: &ThresholdSignature) -> bool {
         // compute root of unity
         let domain = Radix2EvaluationDomain::<F>::new(vp.n as usize).unwrap();
         let ω: F = domain.group_gen;
@@ -384,36 +368,37 @@ impl HinTS {
         let x2 = <Curve as Pairing>::pairing(&π.qx_of_tau_com, &vp.tau_com);
         let x3 = <Curve as Pairing>::pairing(&π.agg_pk, &vp.h_0);
         let rhs = x1.add(x2).add(x3);
-        assert_eq!(lhs, rhs);
+        check_or_return_false!(lhs == rhs);
     
         //assert checks on the public part
     
         //ParSumW(r) − ParSumW(r/ω) − W(r) · b(r) = Q(r) · (r^n − 1)
         let lhs = π.parsum_of_r - π.parsum_of_r_div_ω - π.w_of_r * π.b_of_r;
         let rhs = π.q1_of_r * vanishing_of_r;
-        assert_eq!(lhs, rhs);
+        check_or_return_false!(lhs == rhs);
     
         //Ln−1(X) · ParSumW(X) = Z(X) · Q2(X)
         //TODO: compute l_n_minus_1_of_r in verifier -- dont put it in the proof.
         let lhs = l_n_minus_1_of_r * π.parsum_of_r;
         let rhs = vanishing_of_r * π.q3_of_r;
-        assert_eq!(lhs, rhs);
+        check_or_return_false!(lhs == rhs);
     
         //b(r) * b(r) - b(r) = Q(r) · (r^n − 1)
         let lhs = π.b_of_r * π.b_of_r - π.b_of_r;
         let rhs = π.q2_of_r * vanishing_of_r;
-        assert_eq!(lhs, rhs);
+        check_or_return_false!(lhs == rhs);
     
         //Ln−1(X) · (b(X) − 1) = Z(X) · Q4(X)
         let lhs = l_n_minus_1_of_r * (π.b_of_r - F::from(1));
         let rhs = vanishing_of_r * π.q4_of_r;
-        assert_eq!(lhs, rhs);
+        check_or_return_false!(lhs == rhs);
     
         //run the degree check e([Qx(τ)]_1, [τ]_2) ?= e([Qx(τ)·τ]_1, [1]_2)
         let lhs = <Curve as Pairing>::pairing(&π.qx_of_tau_com, &vp.h_1);
         let rhs = <Curve as Pairing>::pairing(&π.qx_of_tau_mul_tau_com, &vp.h_0);
-        assert_eq!(lhs, rhs);
+        check_or_return_false!(lhs == rhs);
     
+        true
     }
 
     pub fn hint_gen(
@@ -481,7 +466,7 @@ impl HinTS {
         }
     }
     
-    pub fn verify_hint(params: &UniversalParams<Curve>, hint: &ExtendedPublicKey) {
+    pub fn verify_hint(params: &UniversalParams<Curve>, hint: &ExtendedPublicKey) -> bool {
         let i = hint.i;
         let n = hint.qz_i_terms.len();
     
@@ -492,7 +477,7 @@ impl HinTS {
         let l_i_of_tau_com = KZG::commit_g2(&params, &l_i_of_x).expect("commitment failed");
         let lhs = <Curve as Pairing>::pairing(hint.sk_i_l_i_of_tau_com_1, params.powers_of_h[0]);
         let rhs = <Curve as Pairing>::pairing(hint.pk_i, l_i_of_tau_com);
-        assert_eq!(lhs, rhs);
+        check_or_return_false!(lhs == rhs);
     
         for j in 0..n {
             let num: DensePolynomial<F>;
@@ -509,7 +494,7 @@ impl HinTS {
             
             let lhs = <Curve as Pairing>::pairing(hint.qz_i_terms[j], params.powers_of_h[0]);
             let rhs = <Curve as Pairing>::pairing(hint.pk_i, f_com);
-            assert_eq!(lhs, rhs);
+            check_or_return_false!(lhs == rhs);
         }
     
         let x_monomial = utils::compute_x_monomial();
@@ -527,7 +512,7 @@ impl HinTS {
         let qx_term_com = KZG::commit_g2(&params, &qx_term).expect("commitment failed");
         let lhs = <Curve as Pairing>::pairing(hint.qx_i_term, params.powers_of_h[0]);
         let rhs = <Curve as Pairing>::pairing(hint.pk_i, qx_term_com);
-        assert_eq!(lhs, rhs);
+        check_or_return_false!(lhs == rhs);
     
         //qx_term_mul_tau = (l_i(x) - l_i(0))
         let qx_term_mul_tau = &num;
@@ -535,10 +520,20 @@ impl HinTS {
         let qx_term_mul_tau_com = KZG::commit_g2(&params, &qx_term_mul_tau).expect("commitment failed");
         let lhs = <Curve as Pairing>::pairing(hint.qx_i_term_mul_tau, params.powers_of_h[0]);
         let rhs = <Curve as Pairing>::pairing(hint.pk_i, qx_term_mul_tau_com);
-        assert_eq!(lhs, rhs);
-    
+        check_or_return_false!(lhs == rhs);
+
+        true
     }
 
+}
+
+#[macro_export]
+macro_rules! check_or_return_false {
+    ($cond:expr) => {
+        if !$cond {
+            return false;
+        }
+    };
 }
 
 //RO(SK, W, B, ParSum, Qx, Qz, Qx(τ ) · τ, Q1, Q2, Q3, Q4)
@@ -591,16 +586,17 @@ fn verify_opening(
     commitment: &G1,
     point: &F, 
     evaluation: &F,
-    opening_proof: &G1) {
+    opening_proof: &G1) -> bool {
     let eval_com: G1 = vp.g_0.clone().mul(evaluation).into();
     let point_com: G2 = vp.h_0.clone().mul(point).into();
 
     let lhs = <Curve as Pairing>::pairing(commitment.clone() - eval_com, vp.h_0);
     let rhs = <Curve as Pairing>::pairing(opening_proof.clone(), vp.h_1 - point_com);
-    assert_eq!(lhs, rhs);
+    
+    lhs == rhs
 }
 
-fn verify_openings_in_proof(vp: &VerificationKey, π: &ThresholdSignature, r: F) {
+fn verify_openings_in_proof(vp: &VerificationKey, π: &ThresholdSignature, r: F) -> bool {
     //adjust the w_of_x_com
     let adjustment = F::from(0) - π.agg_weight;
     let adjustment_com = vp.l_n_minus_1_of_tau_com.mul(adjustment);
@@ -628,16 +624,19 @@ fn verify_openings_in_proof(vp: &VerificationKey, π: &ThresholdSignature, r: F)
     let rhs = <Curve as Pairing>::pairing(
         π.opening_proof_r, 
         vp.h_1 - vp.h_0.clone().mul(r).into_affine());
-    assert_eq!(lhs, rhs);
+    check_or_return_false!(lhs == rhs);
 
     let domain = Radix2EvaluationDomain::<F>::new(vp.n as usize).unwrap();
     let ω: F = domain.group_gen;
     let r_div_ω: F = r / ω;
-    verify_opening(vp, 
+
+    verify_opening(
+        vp, 
         &π.parsum_of_tau_com, 
         &r_div_ω, 
         &π.parsum_of_r_div_ω, 
-        &π.opening_proof_r_div_ω);
+        &π.opening_proof_r_div_ω
+    )
 }
 
 fn compute_apk(
@@ -749,13 +748,19 @@ mod tests {
     
         // -------------- sample universe specific values ---------------
         //sample random keys
-        let sk: Vec<F> = sample_secret_keys(n - 1);
+        let mut sk: Vec<F> = sample_secret_keys(n - 1);
+        sk.push(F::from(0)); //last element must be 0 for the math to work
+
+        let epk = (0..n)
+            .map(|i| HinTS::hint_gen(&params, n, i, &sk[i]))
+            .collect::<Vec<ExtendedPublicKey>>();
+
         //sample random weights for each party
         let weights = sample_weights(n - 1);
     
         // -------------- perform universe setup ---------------
         //run universe setup
-        let (vk, ak) = HinTS::setup(n, &params, &weights, &sk);
+        let (vk, ak) = HinTS::setup(n, &params, &weights, &epk);
     
         // -------------- sample proof specific values ---------------
         //samples n-1 random bits
