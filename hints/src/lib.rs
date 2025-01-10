@@ -40,13 +40,15 @@ pub type G2ProjectivePoint = Projective<G2Config>;
 
 pub type PartialSignature = G2AffinePoint;
 pub type SecretKey = F;
+pub type PublicKey = G1AffinePoint;
+pub type Weight = F;
 
 /// hinTS signature
 pub struct ThresholdSignature {
     /// aggregate public key (aPK in the paper)
     agg_pk: G1AffinePoint,
     /// aggregate weight (w in the paper)
-    agg_weight: F,
+    agg_weight: Weight,
 
     /// aggregate signature
     agg_sig: G2AffinePoint,
@@ -99,7 +101,7 @@ pub struct ExtendedPublicKey {
     /// index in the address book
     i: usize,
     /// public key pk = [sk]_1
-    pk_i: G1AffinePoint,
+    pk_i: PublicKey,
     /// [ sk_i L_i(τ) ]_1
     sk_i_l_i_of_tau_com_1: G1AffinePoint,
     /// [ sk_i L_i(τ) ]_2
@@ -118,9 +120,9 @@ pub struct AggregationKey {
     /// number of parties plus one (must be a power of 2)
     n: usize,
     /// weights has all parties' weights, where weights[i] is party i's weight
-    weights: Vec<F>,
+    weights: Vec<Weight>,
     /// pks contains all parties' public keys, where pks[i] is g^sk_i
-    pks: Vec<G1AffinePoint>,
+    pks: Vec<PublicKey>,
     /// qz_terms contains pre-processed hints for the Q_z polynomial.
     /// qz_terms[i] has the following form:
     /// [sk_i * (L_i(\tau)^2 - L_i(\tau)) / Z(\tau) + 
@@ -160,7 +162,7 @@ pub struct HinTS { }
 impl HinTS {
 
     /// generates a random secret key
-    pub fn keygen<R: rand::Rng>(rng: &mut R) -> F {
+    pub fn keygen<R: rand::Rng>(rng: &mut R) -> SecretKey {
         F::rand(rng)
     }
 
@@ -169,7 +171,8 @@ impl HinTS {
         crs: &UniversalParams<Curve>,
         n: usize, 
         i: usize, 
-        sk_i: &SecretKey) -> ExtendedPublicKey {
+        sk_i: &SecretKey
+    ) -> ExtendedPublicKey {
         //let us compute the q1 term
         let l_i_of_x = utils::lagrange_poly(n, i);
         let z_of_x = utils::compute_vanishing_poly(n);
@@ -235,10 +238,9 @@ impl HinTS {
     pub fn preprocess(
         n: usize,
         crs: &UniversalParams<Curve>,
-        w: &Vec<F>,
+        w: &Vec<Weight>,
         epk: &Vec<ExtendedPublicKey>
-    ) -> (VerificationKey, AggregationKey)
-    {
+    ) -> (VerificationKey, AggregationKey) {
         let mut weights = w.clone();
     
         //last element must be 0 for the math to work
@@ -297,7 +299,7 @@ impl HinTS {
 
     pub fn sign(
         msg: &[u8],
-        sk: &SecretKey,
+        sk: &SecretKey
     ) -> PartialSignature {
         hash_to_g2(msg).mul(sk).into_affine()
     }
@@ -305,10 +307,10 @@ impl HinTS {
     pub fn partial_verify(
         crs: &UniversalParams<Curve>,
         msg: &[u8],
-        epk: &G1AffinePoint,
+        pk: &PublicKey,
         sig: &PartialSignature
     ) -> bool {
-        let lhs = <Curve as Pairing>::pairing(epk, hash_to_g2(msg));
+        let lhs = <Curve as Pairing>::pairing(pk, hash_to_g2(msg));
         let rhs = <Curve as Pairing>::pairing(crs.powers_of_g[0], sig);
         lhs == rhs
     }
@@ -648,7 +650,8 @@ fn verify_opening(
     commitment: &G1AffinePoint,
     point: &F, 
     evaluation: &F,
-    opening_proof: &G1AffinePoint) -> bool {
+    opening_proof: &G1AffinePoint
+) -> bool {
     let eval_com: G1AffinePoint = vp.g_0.clone().mul(evaluation).into();
     let point_com: G2AffinePoint = vp.h_0.clone().mul(point).into();
 
@@ -658,7 +661,11 @@ fn verify_opening(
     lhs == rhs
 }
 
-fn verify_openings_in_proof(vp: &VerificationKey, π: &ThresholdSignature, r: F) -> bool {
+fn verify_openings_in_proof(
+    vp: &VerificationKey,
+    π: &ThresholdSignature,
+    r: F
+) -> bool {
     //adjust the w_of_x_com
     let adjustment = F::from(0) - π.agg_weight;
     let adjustment_com = vp.l_n_minus_1_of_tau_com.mul(adjustment);
@@ -709,8 +716,6 @@ fn compute_aggregate_pubkey(
     let mut exponents: Vec<F> = vec![];
     let n_inv = F::from(1) / F::from(n as u64);
     for i in 0..n {
-        //let l_i_of_x = cache.lagrange_polynomials[i].clone();
-        //let l_i_of_0 = l_i_of_x.evaluate(&F::from(0));
         let l_i_of_0 = n_inv;
         let active = bitmap[i] == F::from(1);
         exponents.push(if active { l_i_of_0 } else { F::from(0) });
@@ -765,7 +770,10 @@ fn preprocess_qz_contributions(
     q1_coms
 }
 
-fn compute_psw_poly(weights: &Vec<F>, bitmap: &Vec<F>) -> DensePolynomial<F> {
+fn compute_psw_poly(
+    weights: &Vec<Weight>,
+    bitmap: &Vec<F>
+) -> DensePolynomial<F> {
     let n = weights.len();
     let mut parsum = F::from(0);
     let mut evals = vec![];
@@ -783,7 +791,8 @@ fn compute_psw_poly(weights: &Vec<F>, bitmap: &Vec<F>) -> DensePolynomial<F> {
 fn filter_and_add(
     crs: &UniversalParams<Curve>, 
     elements: &Vec<G1AffinePoint>, 
-    bitmap: &Vec<F>) -> G1AffinePoint {
+    bitmap: &Vec<F>
+) -> G1AffinePoint {
     let mut com = KZG::commit_g1(crs, &utils::compute_constant_poly(&F::from(0))).unwrap();
     for i in 0..bitmap.len() {
         if bitmap[i] == F::from(1) {
@@ -795,7 +804,8 @@ fn filter_and_add(
 
 fn add_all_g2(
     crs: &UniversalParams<Curve>, 
-    elements: &Vec<G2AffinePoint>) -> G2AffinePoint {
+    elements: &Vec<G2AffinePoint>
+) -> G2AffinePoint {
     let mut com = KZG::commit_g2(crs, &utils::compute_constant_poly(&F::from(0))).unwrap();
     for i in 0..elements.len() {
         com = com.add(elements[i]).into_affine();
