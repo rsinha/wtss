@@ -43,6 +43,7 @@ pub type SecretKey = F;
 pub type PublicKey = G1AffinePoint;
 pub type Weight = F;
 
+#[derive(Clone, Debug)]
 /// hinTS signature
 pub struct ThresholdSignature {
     /// aggregate public key (aPK in the paper)
@@ -490,7 +491,7 @@ impl HinTS {
         );
     
         // verify the polynomial openings at r and r / ω
-        verify_openings_in_proof(vk, π, r);
+        check_or_return_false!(verify_openings_in_proof(vk, π, r));
     
         let n: u64 = vk.n as u64;
         // this takes logarithmic computation, but concretely efficient
@@ -675,22 +676,22 @@ fn verify_opening(
 }
 
 fn verify_openings_in_proof(
-    vp: &VerificationKey,
+    vk: &VerificationKey,
     π: &ThresholdSignature,
     r: F
 ) -> bool {
     //adjust the w_of_x_com
     let adjustment = F::from(0) - π.agg_weight;
-    let adjustment_com = vp.l_n_minus_1_of_tau_com.mul(adjustment);
-    let w_of_x_com: G1AffinePoint = (vp.w_of_tau_com + adjustment_com).into();
+    let adjustment_com = vk.l_n_minus_1_of_tau_com.mul(adjustment);
+    let w_of_x_com: G1AffinePoint = (vk.w_of_tau_com + adjustment_com).into();
 
-    let psw_of_r_argument = π.parsum_of_tau_com - vp.g_0.clone().mul(π.parsum_of_r).into_affine();
-    let w_of_r_argument = w_of_x_com - vp.g_0.clone().mul(π.w_of_r).into_affine();
-    let b_of_r_argument = π.b_of_tau_com - vp.g_0.clone().mul(π.b_of_r).into_affine();
-    let psw_wff_q_of_r_argument = π.q1_of_tau_com - vp.g_0.clone().mul(π.q1_of_r).into_affine();
-    let psw_check_q_of_r_argument = π.q3_of_tau_com - vp.g_0.clone().mul(π.q3_of_r).into_affine();
-    let b_wff_q_of_r_argument = π.q2_of_tau_com - vp.g_0.clone().mul(π.q2_of_r).into_affine();
-    let b_check_q_of_r_argument = π.q4_of_tau_com - vp.g_0.clone().mul(π.q4_of_r).into_affine();
+    let psw_of_r_argument = π.parsum_of_tau_com - vk.g_0.clone().mul(π.parsum_of_r).into_affine();
+    let w_of_r_argument = w_of_x_com - vk.g_0.clone().mul(π.w_of_r).into_affine();
+    let b_of_r_argument = π.b_of_tau_com - vk.g_0.clone().mul(π.b_of_r).into_affine();
+    let psw_wff_q_of_r_argument = π.q1_of_tau_com - vk.g_0.clone().mul(π.q1_of_r).into_affine();
+    let psw_check_q_of_r_argument = π.q3_of_tau_com - vk.g_0.clone().mul(π.q3_of_r).into_affine();
+    let b_wff_q_of_r_argument = π.q2_of_tau_com - vk.g_0.clone().mul(π.q2_of_r).into_affine();
+    let b_check_q_of_r_argument = π.q4_of_tau_com - vk.g_0.clone().mul(π.q4_of_r).into_affine();
 
     let merged_argument: G1AffinePoint = (psw_of_r_argument
         + w_of_r_argument.mul(r.pow([1]))
@@ -702,18 +703,18 @@ fn verify_openings_in_proof(
 
     let lhs = <Curve as Pairing>::pairing(
         merged_argument, 
-        vp.h_0);
+        vk.h_0);
     let rhs = <Curve as Pairing>::pairing(
         π.opening_proof_r, 
-        vp.h_1 - vp.h_0.clone().mul(r).into_affine());
+        vk.h_1 - vk.h_0.clone().mul(r).into_affine());
     check_or_return_false!(lhs == rhs);
 
-    let domain = Radix2EvaluationDomain::<F>::new(vp.n as usize).unwrap();
+    let domain = Radix2EvaluationDomain::<F>::new(vk.n as usize).unwrap();
     let ω: F = domain.group_gen;
     let r_div_ω: F = r / ω;
 
     verify_opening(
-        vp, 
+        vk, 
         &π.parsum_of_tau_com, 
         &r_div_ω, 
         &π.parsum_of_r_div_ω, 
@@ -843,7 +844,7 @@ mod tests {
 
     use std::time::Instant;
     use ark_std::rand::Rng;
-    use ark_std::{UniformRand, test_rng};
+    use ark_std::test_rng;
 
     #[test]
     fn it_works() {
@@ -877,7 +878,7 @@ mod tests {
     
         // -------------- sample proof specific values ---------------
         //samples n-1 random bits
-        let bitmap = sample_bitmap(n - 1, 0.1);
+        let bitmap = sample_bitmap(n - 1, 0.95);
 
         // for all the active parties, sample partial signatures
         let partial_signatures = (0..n-1)
@@ -900,14 +901,19 @@ mod tests {
     
         let start = Instant::now();
         let threshold = (F::from(1), F::from(3)); // 1/3
-        HinTS::verify(&params, msg, &vk, &π, threshold);
+        assert!(HinTS::verify(&params, msg, &vk, &π, threshold));
         let duration = start.elapsed();
         println!("Time elapsed in verifier is: {:?}", duration);
+
+        // attack the proof
+        let mut π_attack = π.clone();
+        π_attack.agg_weight = F::from(1000000000); // some arbitrary weight
+        assert!(!HinTS::verify(&params, msg, &vk, &π_attack, threshold));
     }
 
     fn sample_weights(n: usize) -> Vec<F> {
-        let mut rng = &mut test_rng();
-        (0..n).map(|_| F::from(u64::rand(&mut rng))).collect()
+        let rng = &mut test_rng();
+        (0..n).map(|_| F::from(rng.gen_range(1..10)) + F::from(10)).collect()
     }
     
     /// n is the size of the bitmap, and probability is for true or 1.
