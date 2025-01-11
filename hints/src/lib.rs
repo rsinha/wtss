@@ -139,6 +139,8 @@ pub struct AggregationKey {
 pub struct VerificationKey {
     /// the universe has n - 1 parties (where n is a power of 2)
     n: usize,
+    /// total weight of all signers
+    total_weight: Weight,
     /// first G1 element from the KZG CRS (for zeroth power of tau)
     g_0: G1AffinePoint,
     /// first G2 element from the KZG CRS (for zeroth power of tau)
@@ -241,13 +243,13 @@ impl HinTS {
         w: &Vec<Weight>,
         epk: &Vec<ExtendedPublicKey>
     ) -> (VerificationKey, AggregationKey) {
+
+        // let us first pad the weights to a power of 2 size to compute a commitment
         let mut weights = w.clone();
-    
         //last element must be 0 for the math to work
-        weights.push(F::from(0));
+        weights.push(F::from(0)); // just for computing the commitment to w(x)
     
         let w_of_x = utils::interpolate_poly_over_mult_subgroup(&weights);
-        let w_of_x_com = KZG::commit_g1(&crs, &w_of_x).unwrap();
     
         //allocate space to collect setup material from all n-1 parties
         let mut qz_contributions : Vec<Vec<G1AffinePoint>> = vec![Default::default(); n];
@@ -270,21 +272,24 @@ impl HinTS {
         let z_of_x = utils::compute_vanishing_poly(n);
         let x_monomial = utils::compute_x_monomial();
         let l_n_minus_1_of_x = utils::lagrange_poly(n, n-1);
+
+        let total_weight = weights.iter().fold(F::from(0), |acc, &x| acc + x);
     
-        let vp = VerificationKey {
+        let vk = VerificationKey {
             n: n,
+            total_weight: total_weight,
             g_0: crs.powers_of_g[0].clone(),
             h_0: crs.powers_of_h[0].clone(),
             h_1: crs.powers_of_h[1].clone(),
             l_n_minus_1_of_tau_com: KZG::commit_g1(&crs, &l_n_minus_1_of_x).unwrap(),
-            w_of_tau_com: w_of_x_com,
+            w_of_tau_com: KZG::commit_g1(&crs, &w_of_x).unwrap(),
             // combine all sk_i l_i_of_x commitments to get commitment to sk(x)
             sk_of_tau_com: add_all_g2(&crs, &sk_l_of_tau_coms),
             z_of_tau_com: KZG::commit_g2(&crs, &z_of_x).unwrap(),
             tau_com: KZG::commit_g2(&crs, &x_monomial).unwrap(),
         };
     
-        let pp = AggregationKey {
+        let ak = AggregationKey {
             n: n,
             weights: w.clone(),
             pks: pks,
@@ -293,7 +298,7 @@ impl HinTS {
             qx_mul_tau_terms: qx_mul_tau_contributions,
         };
     
-        (vp, pp)
+        (vk, ak)
     
     }
 
@@ -326,6 +331,8 @@ impl HinTS {
         let n = ak.n;
     
         //adjust the weights and bitmap polynomials
+
+        // the weights vector is of size power of 2 - 1; lets pad
         let mut weights = ak.weights.clone();
         //compute sum of weights of active signers
         let total_active_weight = bitmap
@@ -335,6 +342,7 @@ impl HinTS {
         //weight's last element must the additive inverse of active weight
         weights.push(F::from(0) - total_active_weight);
     
+        // bitmap needs to pad with 1 to activate the last weight
         let mut bitmap = bitmap.clone();
         //bitmap's last element must be 1 for our scheme
         bitmap.push(F::from(1));
@@ -351,7 +359,6 @@ impl HinTS {
         let b_of_x = utils::interpolate_poly_over_mult_subgroup(&bitmap);
         let psw_of_x = compute_psw_poly(&weights, &bitmap);
         let psw_of_x_div_ω = utils::poly_domain_mult_ω(&psw_of_x, &ω_inv);
-    
     
         //ParSumW(X) = ParSumW(X/ω) + W(X) · b(X) + Z(X) · Q1(X)
         let t_of_x = psw_of_x.sub(&psw_of_x_div_ω).sub(&w_of_x.mul(&b_of_x));
@@ -450,21 +457,27 @@ impl HinTS {
     pub fn verify(
         crs: &UniversalParams<Curve>,
         msg: &[u8],
-        vp: &VerificationKey,
-        π: &ThresholdSignature
+        vk: &VerificationKey,
+        π: &ThresholdSignature,
+        threshold_fraction: (F, F) // e.g. (1,3) to denote 1/3 threshold
     ) -> bool {
+
+        // check that the threshold is satisfied
+        check_or_return_false!(
+            threshold_fraction.1 * π.agg_weight >= threshold_fraction.0 * vk.total_weight
+        );
 
         // verify the signature first
         check_or_return_false!(Self::partial_verify(crs, msg, &π.agg_pk, &π.agg_sig));
 
         // compute root of unity
-        let domain = Radix2EvaluationDomain::<F>::new(vp.n as usize).unwrap();
+        let domain = Radix2EvaluationDomain::<F>::new(vk.n as usize).unwrap();
         let ω: F = domain.group_gen;
     
         //RO(SK, W, B, ParSum, Qx, Qz, Qx(τ ) · τ, Q1, Q2, Q3, Q4)
         let r = random_oracle(
-            vp.sk_of_tau_com, 
-            vp.w_of_tau_com,
+            vk.sk_of_tau_com,
+            vk.w_of_tau_com,
             π.b_of_tau_com,
             π.parsum_of_tau_com,
             π.qx_of_tau_com,
@@ -477,9 +490,9 @@ impl HinTS {
         );
     
         // verify the polynomial openings at r and r / ω
-        verify_openings_in_proof(vp, π, r);
+        verify_openings_in_proof(vk, π, r);
     
-        let n: u64 = vp.n as u64;
+        let n: u64 = vk.n as u64;
         // this takes logarithmic computation, but concretely efficient
         let vanishing_of_r: F = r.pow([n]) - F::from(1);
     
@@ -489,10 +502,10 @@ impl HinTS {
         let l_n_minus_1_of_r = (ω_pow_n_minus_1 / F::from(n)) * (vanishing_of_r / (r - ω_pow_n_minus_1));
     
         //assert polynomial identity B(x) SK(x) = ask + Q_z(x) Z(x) + Q_x(x) x
-        let lhs = <Curve as Pairing>::pairing(&π.b_of_tau_com, &vp.sk_of_tau_com);
-        let x1 = <Curve as Pairing>::pairing(&π.qz_of_tau_com, &vp.z_of_tau_com);
-        let x2 = <Curve as Pairing>::pairing(&π.qx_of_tau_com, &vp.tau_com);
-        let x3 = <Curve as Pairing>::pairing(&π.agg_pk, &vp.h_0);
+        let lhs = <Curve as Pairing>::pairing(&π.b_of_tau_com, &vk.sk_of_tau_com);
+        let x1 = <Curve as Pairing>::pairing(&π.qz_of_tau_com, &vk.z_of_tau_com);
+        let x2 = <Curve as Pairing>::pairing(&π.qx_of_tau_com, &vk.tau_com);
+        let x3 = <Curve as Pairing>::pairing(&π.agg_pk, &vk.h_0);
         let rhs = x1.add(x2).add(x3);
         check_or_return_false!(lhs == rhs);
     
@@ -520,8 +533,8 @@ impl HinTS {
         check_or_return_false!(lhs == rhs);
     
         //run the degree check e([Qx(τ)]_1, [τ]_2) ?= e([Qx(τ)·τ]_1, [1]_2)
-        let lhs = <Curve as Pairing>::pairing(&π.qx_of_tau_com, &vp.h_1);
-        let rhs = <Curve as Pairing>::pairing(&π.qx_of_tau_mul_tau_com, &vp.h_0);
+        let lhs = <Curve as Pairing>::pairing(&π.qx_of_tau_com, &vk.h_1);
+        let rhs = <Curve as Pairing>::pairing(&π.qx_of_tau_mul_tau_com, &vk.h_0);
         check_or_return_false!(lhs == rhs);
     
         true
@@ -774,12 +787,11 @@ fn compute_psw_poly(
     weights: &Vec<Weight>,
     bitmap: &Vec<F>
 ) -> DensePolynomial<F> {
-    let n = weights.len();
+    let n = weights.len(); //power of 2 size
     let mut parsum = F::from(0);
     let mut evals = vec![];
     for i in 0..n {
-        let w_i_b_i = bitmap[i] * weights[i];
-        parsum += w_i_b_i;
+        parsum += bitmap[i] * weights[i];
         evals.push(parsum);
     }
 
@@ -865,7 +877,7 @@ mod tests {
     
         // -------------- sample proof specific values ---------------
         //samples n-1 random bits
-        let bitmap = sample_bitmap(n - 1, 0.5);
+        let bitmap = sample_bitmap(n - 1, 0.1);
 
         // for all the active parties, sample partial signatures
         let partial_signatures = (0..n-1)
@@ -887,7 +899,8 @@ mod tests {
         
     
         let start = Instant::now();
-        HinTS::verify(&params, msg, &vk, &π);
+        let threshold = (F::from(1), F::from(3)); // 1/3
+        HinTS::verify(&params, msg, &vk, &π, threshold);
         let duration = start.elapsed();
         println!("Time elapsed in verifier is: {:?}", duration);
     }
