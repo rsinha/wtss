@@ -1,4 +1,4 @@
-use ark_serialize::CanonicalSerialize;
+use ark_serialize::{CanonicalSerialize, CanonicalDeserialize};
 use ark_poly::{
     Polynomial,
     univariate::DensePolynomial, 
@@ -43,7 +43,7 @@ pub type SecretKey = F;
 pub type PublicKey = G1AffinePoint;
 pub type Weight = F;
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq, CanonicalDeserialize, CanonicalSerialize)]
 /// hinTS signature
 pub struct ThresholdSignature {
     /// aggregate public key (aPK in the paper)
@@ -97,6 +97,7 @@ pub struct ThresholdSignature {
     q4_of_r: F,
 }
 
+#[derive(Clone, Debug, PartialEq, CanonicalDeserialize, CanonicalSerialize)]
 /// Hint contains all material output by a party during the setup phase
 pub struct ExtendedPublicKey {
     /// index in the address book
@@ -116,6 +117,7 @@ pub struct ExtendedPublicKey {
     qx_i_term_mul_tau: G1AffinePoint,
 }
 
+#[derive(Clone, Debug, PartialEq, CanonicalDeserialize, CanonicalSerialize)]
 /// AggregationKey contains all material needed by Prover to produce a hinTS proof
 pub struct AggregationKey {
     /// number of parties plus one (must be a power of 2)
@@ -137,6 +139,7 @@ pub struct AggregationKey {
     qx_mul_tau_terms : Vec<G1AffinePoint>,
 }
 
+#[derive(Clone, Debug, PartialEq, CanonicalDeserialize, CanonicalSerialize)]
 pub struct VerificationKey {
     /// the universe has n - 1 parties (where n is a power of 2)
     n: usize,
@@ -905,6 +908,27 @@ mod tests {
         let duration = start.elapsed();
         println!("Time elapsed in verifier is: {:?}", duration);
 
+        // test (de)-serialization
+        let serialized_vk = serialize(&vk);
+        let deserialized_vk = deserialize::<VerificationKey>(&serialized_vk);
+
+        let serialized_ak = serialize(&ak);
+        let deserialized_ak = deserialize::<AggregationKey>(&serialized_ak);
+
+        let serialized_π = serialize(&π);
+        let deserialized_π = deserialize::<ThresholdSignature>(&serialized_π);
+
+        assert_eq!(vk, deserialized_vk);
+        assert_eq!(ak, deserialized_ak);
+        assert_eq!(π, deserialized_π);
+
+        assert!(HinTS::verify(&params, msg, &deserialized_vk, &deserialized_π, threshold));
+
+        // print out sizes
+        println!("Size of vk: {}", serialized_vk.len());
+        println!("Size of ak: {}", serialized_ak.len());
+        println!("Size of π: {}", serialized_π.len());
+
         // attack the proof
         let mut π_attack = π.clone();
         π_attack.agg_weight = F::from(1000000000); // some arbitrary weight
@@ -926,5 +950,15 @@ mod tests {
             bitmap.push(F::from(bit));
         }
         bitmap
+    }
+
+    fn serialize<T: CanonicalSerialize>(t: &T) -> Vec<u8> {
+        let mut buf = Vec::new();
+        t.serialize_uncompressed(&mut buf).unwrap();
+        buf
+    }
+
+    fn deserialize<T: CanonicalDeserialize>(buf: &[u8]) -> T {
+        T::deserialize_uncompressed(buf).unwrap()
     }
 }
