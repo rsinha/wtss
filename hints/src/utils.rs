@@ -1,6 +1,6 @@
 #![allow(dead_code)]
 
-use ark_ff::Field;
+use ark_ff::PrimeField;
 use ark_poly::{
     Polynomial,
     univariate::DensePolynomial, 
@@ -9,18 +9,16 @@ use ark_poly::{
     Evaluations
 };
 
-type F = ark_bls12_381::Fr;
-
 //returns t(X) = X^n - 1
-pub fn compute_vanishing_poly(n: usize) -> DensePolynomial<F> {
+pub fn compute_vanishing_poly<F: PrimeField + From<u64>>(n: usize) -> DensePolynomial<F> {
     let mut coeffs = vec![];
     for i in 0..n+1 {
         if i == 0 {
-            coeffs.push(F::from(0) - F::from(1)); // -1
+            coeffs.push(F::from(0u64) - F::from(1u64)); // -1
         } else if i == n {
-            coeffs.push(F::from(1)); // X^n
+            coeffs.push(F::from(1u64)); // X^n
         } else {
-            coeffs.push(F::from(0));
+            coeffs.push(F::from(0u64));
         }
     }
     DensePolynomial { coeffs }
@@ -29,7 +27,7 @@ pub fn compute_vanishing_poly(n: usize) -> DensePolynomial<F> {
 /// interpolate polynomial which evaluates to points in v
 /// the domain is the powers of n-th root of unity, where n is size of v
 /// assumes n is a power of 2
-pub fn interpolate_poly_over_mult_subgroup(v: &Vec<F>) -> DensePolynomial<F> {
+pub fn interpolate_poly_over_mult_subgroup<F: PrimeField + From<u64>>(v: &Vec<F>) -> DensePolynomial<F> {
     let n = v.len();
     let mut evals = vec![];
     for i in 0..n {
@@ -42,7 +40,7 @@ pub fn interpolate_poly_over_mult_subgroup(v: &Vec<F>) -> DensePolynomial<F> {
 }
 
 // 1 at omega^i and 0 elsewhere on domain {omega^i}_{i \in [n]}
-pub fn lagrange_poly(n: usize, i: usize) -> DensePolynomial<F> {
+pub fn lagrange_poly<F: PrimeField + From<u64>>(n: usize, i: usize) -> DensePolynomial<F> {
     //todo: check n is a power of 2
     let mut evals = vec![];
     for j in 0..n {
@@ -58,22 +56,22 @@ pub fn lagrange_poly(n: usize, i: usize) -> DensePolynomial<F> {
 }
 
 // returns t(X) = X
-pub fn compute_x_monomial() -> DensePolynomial<F> {
+pub fn compute_x_monomial<F: PrimeField + From<u64>>() -> DensePolynomial<F> {
     let mut coeffs = vec![];
-    coeffs.push(F::from(0)); // 0
-    coeffs.push(F::from(1)); // X
+    coeffs.push(F::from(0u64)); // 0
+    coeffs.push(F::from(1u64)); // X
     DensePolynomial { coeffs }
 }
 
 // returns t(X) = c
-pub fn compute_constant_poly(c: &F) -> DensePolynomial<F> {
+pub fn compute_constant_poly<F: PrimeField>(c: &F) -> DensePolynomial<F> {
     let mut coeffs = vec![];
     coeffs.push(c.clone()); // c
     DensePolynomial { coeffs }
 }
 
 //computes f(ωx)
-pub fn poly_domain_mult_ω(f: &DensePolynomial<F>, ω: &F) -> DensePolynomial<F> {
+pub fn poly_domain_mult_ω<F: PrimeField>(f: &DensePolynomial<F>, ω: &F) -> DensePolynomial<F> {
     let mut new_poly = f.clone();
     for i in 1..(f.degree() + 1) { //we don't touch the zeroth coefficient
         let ω_pow_i: F = ω.pow([i as u64]);
@@ -83,7 +81,7 @@ pub fn poly_domain_mult_ω(f: &DensePolynomial<F>, ω: &F) -> DensePolynomial<F>
 }
 
 //computes c . f(x), for some constnt c
-pub fn poly_eval_mult_c(f: &DensePolynomial<F>, c: &F) -> DensePolynomial<F> {
+pub fn poly_eval_mult_c<F: PrimeField>(f: &DensePolynomial<F>, c: &F) -> DensePolynomial<F> {
     let mut new_poly = f.clone();
     for i in 0..(f.degree() + 1) {
         new_poly.coeffs[i] = new_poly.coeffs[i] * c.clone();

@@ -221,7 +221,7 @@ impl HinTS {
         let qx_term_mul_tau_com = KZG::commit_g1(&crs, &qx_term_mul_tau).expect("commitment failed");
     
         //release my public key
-        let sk_as_poly = utils::compute_constant_poly(&sk_i);
+        let sk_as_poly = utils::compute_constant_poly(sk_i);
         let pk = KZG::commit_g1(&crs, &sk_as_poly).expect("commitment failed");
     
         let sk_times_l_i_of_x = utils::poly_eval_mult_c(&l_i_of_x, &sk_i);
