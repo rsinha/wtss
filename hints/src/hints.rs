@@ -10,10 +10,10 @@ use ark_std::{UniformRand, ops::*};
 use ark_bls12_381::{Bls12_381, g1::Config as G1Config, g2::Config as G2Config};
 use ark_ec::pairing::Pairing;
 use ark_ec::{AffineRepr, CurveGroup, short_weierstrass::{Affine, Projective}};
-use ark_ec::VariableBaseMSM;
 use ark_ec::hashing::{curve_maps::wb::WBMap, map_to_curve_hasher::MapToCurveBasedHasher, HashToCurve};
 use ark_ff::{Field, field_hashers::DefaultFieldHasher, BigInteger256};
 use sha2::{Digest, Sha256};
+use ark_std::collections::HashMap;
 
 // hinTS depends on the utils and kzg modules
 use crate::utils;
@@ -37,13 +37,13 @@ pub type G1ProjectivePoint = Projective<G1Config>;
 /// Represents a point in G2 (projective coordinates)
 pub type G2ProjectivePoint = Projective<G2Config>;
 
-/// Type denoting a partial signature
+/// Type denoting a partial signature, which is a G2 group element
 pub type PartialSignature = G2AffinePoint;
-/// Type denoting secret key
+/// Type denoting secret key, which is just a scalar value
 pub type SecretKey = F;
-/// Type denoting public key
+/// Type denoting public key, which is a G1 group element
 pub type PublicKey = G1AffinePoint;
-/// Type denoting a signer's weight
+/// Type denoting a signer's weight, which is just a scalar value
 pub type Weight = F;
 
 #[derive(Clone, Debug, PartialEq, CanonicalDeserialize, CanonicalSerialize)]
@@ -53,7 +53,6 @@ pub struct ThresholdSignature {
     agg_pk: G1AffinePoint,
     /// aggregate weight (w in the paper)
     agg_weight: Weight,
-
     /// aggregate signature
     agg_sig: G2AffinePoint,
 
@@ -105,6 +104,8 @@ pub struct ThresholdSignature {
 pub struct ExtendedPublicKey {
     /// index in the address book
     i: usize,
+    /// universe size (power of 2) for which this extended public key is generated
+    n: usize,
     /// public key pk = [sk]_1
     pk_i: PublicKey,
     /// [ sk_i L_i(τ) ]_1
@@ -171,17 +172,18 @@ pub struct HinTS;
 
 impl HinTS {
 
-    /// generates a random secret key
+    /// generates a random secret key using the supplied random number generator
     pub fn keygen<R: rand::Rng>(rng: &mut R) -> SecretKey {
         F::rand(rng)
     }
 
-    /// generates the extended public key
+    /// generates the extended public key (a.k.a. hint) for signer with
+    /// secret key sk and index i within a universe of n-1 signers 
     pub fn hint_gen(
         crs: &CRS,
         n: usize, 
         i: usize, 
-        sk_i: &SecretKey
+        sk: &SecretKey
     ) -> ExtendedPublicKey {
         assert_power_of_2!(n);
 
@@ -194,47 +196,47 @@ impl HinTS {
         for j in 0..n {
             let num: DensePolynomial<F>;// = compute_constant_poly(&F::from(0));
             if i == j {
-                num = l_i_of_x.clone().mul(&l_i_of_x).sub(&l_i_of_x);
+                num = l_i_of_x.mul(&l_i_of_x).sub(&l_i_of_x);
             } else { //cross-terms
                 let l_j_of_x = utils::lagrange_poly(n, j);
                 num = l_j_of_x.mul(&l_i_of_x);
             }
     
             let f = num.div(&z_of_x);
-            let sk_times_f = utils::poly_eval_mult_c(&f, &sk_i);
+            let sk_times_f = utils::poly_eval_mult_c(&f, &sk);
     
-            let com = KZG::commit_g1(&crs, &sk_times_f).expect("commitment failed");
+            let com = KZG::commit_g1(&crs, &sk_times_f).unwrap();
     
             qz_terms.push(com);
         }
     
-        let x_monomial = utils::compute_x_monomial();
         let l_i_of_0 = l_i_of_x.evaluate(&F::from(0));
         let l_i_of_0_poly = utils::compute_constant_poly(&l_i_of_0);
     
         //numerator is l_i(x) - l_i(0)
         let num = l_i_of_x.sub(&l_i_of_0_poly);
         //denominator is x
-        let den = x_monomial.clone();
+        let den = utils::compute_x_monomial();
         //qx_term = sk_i * (l_i(x) - l_i(0)) / x
-        let qx_term = utils::poly_eval_mult_c(&num.div(&den), &sk_i);
+        let qx_term = utils::poly_eval_mult_c(&num.div(&den), &sk);
         //qx_term_mul_tau = sk_i * (l_i(x) - l_i(0)) / x
-        let qx_term_mul_tau = utils::poly_eval_mult_c(&num, &sk_i);
+        let qx_term_mul_tau = utils::poly_eval_mult_c(&num, &sk);
         //qx_term_com = [ sk_i * (l_i(τ) - l_i(0)) / τ ]_1
-        let qx_term_com = KZG::commit_g1(&crs, &qx_term).expect("commitment failed");
+        let qx_term_com = KZG::commit_g1(&crs, &qx_term).unwrap();
         //qx_term_mul_tau_com = [ sk_i * (l_i(τ) - l_i(0)) ]_1
-        let qx_term_mul_tau_com = KZG::commit_g1(&crs, &qx_term_mul_tau).expect("commitment failed");
+        let qx_term_mul_tau_com = KZG::commit_g1(&crs, &qx_term_mul_tau).unwrap();
     
         //release my public key
-        let sk_as_poly = utils::compute_constant_poly(sk_i);
-        let pk = KZG::commit_g1(&crs, &sk_as_poly).expect("commitment failed");
+        let sk_as_poly = utils::compute_constant_poly(sk);
+        let pk = KZG::commit_g1(&crs, &sk_as_poly).unwrap();
     
-        let sk_times_l_i_of_x = utils::poly_eval_mult_c(&l_i_of_x, &sk_i);
-        let com_sk_l_i_g1 = KZG::commit_g1(&crs, &sk_times_l_i_of_x).expect("commitment failed");
-        let com_sk_l_i_g2 = KZG::commit_g2(&crs, &sk_times_l_i_of_x).expect("commitment failed");
+        let sk_times_l_i_of_x = utils::poly_eval_mult_c(&l_i_of_x, &sk);
+        let com_sk_l_i_g1 = KZG::commit_g1(&crs, &sk_times_l_i_of_x).unwrap();
+        let com_sk_l_i_g2 = KZG::commit_g2(&crs, &sk_times_l_i_of_x).unwrap();
     
         ExtendedPublicKey {
             i: i,
+            n: n,
             pk_i: pk,
             sk_i_l_i_of_tau_com_1: com_sk_l_i_g1,
             sk_i_l_i_of_tau_com_2: com_sk_l_i_g2,
@@ -244,21 +246,29 @@ impl HinTS {
         }
     }
 
-    /// preprocesses all nodes' extended public keys and weights,
+    /// preprocesses all signers' extended public keys and weights,
     /// and outputs the network's verification key and aggregation key
     pub fn preprocess(
         n: usize,
         crs: &CRS,
-        w: &Vec<Weight>,
-        epk: &Vec<ExtendedPublicKey>
+        signer_info: &HashMap<usize, (Weight, ExtendedPublicKey)>,
     ) -> (VerificationKey, AggregationKey) {
         assert_power_of_2!(n);
-
-        // let us first pad the weights to a power of 2 size to compute a commitment
-        let mut weights = w.clone();
-        //last element must be 0 for the math to work
-        weights.push(F::from(0)); // just for computing the commitment to w(x)
     
+        let mut weights: Vec<Weight> = Vec::new();
+        let mut epks: Vec<ExtendedPublicKey> = Vec::new();
+        for i in 0..n {
+            if let Some((weight, hint)) = signer_info.get(&i) {
+                assert!(hint.n == n);
+                weights.push(weight.clone());
+                epks.push(hint.clone());
+            } else {
+                weights.push(F::from(0));
+                epks.push(Self::hint_gen(crs, n, i, &F::from(0)));
+            }
+        }
+
+
         let w_of_x = utils::interpolate_poly_over_mult_subgroup(&weights);
     
         //allocate space to collect setup material from all n-1 parties
@@ -268,9 +278,10 @@ impl HinTS {
         let mut pks : Vec<G1AffinePoint> = vec![Default::default(); n];
         let mut sk_l_of_tau_coms: Vec<G2AffinePoint> = vec![Default::default(); n];
     
-        for hint in epk {
+        for hint in epks {
             //verify hint
             verify_hint(crs, &hint);
+
             //extract necessary items for pre-processing
             qz_contributions[hint.i] = hint.qz_i_terms.clone();
             qx_contributions[hint.i] = hint.qx_i_term.clone();
@@ -288,19 +299,19 @@ impl HinTS {
         let vk = VerificationKey {
             n: n,
             total_weight: total_weight,
-            g_0: crs.powers_of_g[0].clone(),
-            h_0: crs.powers_of_h[0].clone(),
-            h_1: crs.powers_of_h[1].clone(),
+            g_0: crs.powers_of_g[0],
+            h_0: crs.powers_of_h[0],
+            h_1: crs.powers_of_h[1],
             l_n_minus_1_of_tau_com: KZG::commit_g1(&crs, &l_n_minus_1_of_x).unwrap(),
             w_of_tau_com: KZG::commit_g1(&crs, &w_of_x).unwrap(),
-            sk_of_tau_com: add(&sk_l_of_tau_coms),
+            sk_of_tau_com: add::<G2AffinePoint>(sk_l_of_tau_coms),
             z_of_tau_com: KZG::commit_g2(&crs, &z_of_x).unwrap(),
             tau_com: KZG::commit_g2(&crs, &x_monomial).unwrap(),
         };
     
         let ak = AggregationKey {
             n: n,
-            weights: w.clone(),
+            weights: weights,
             pks: pks,
             qz_terms: preprocess_qz_contributions(&qz_contributions),
             qx_terms: qx_contributions,
@@ -311,6 +322,7 @@ impl HinTS {
     
     }
 
+    /// signs a message using the signer's secret key, producing a partial signature
     pub fn sign(
         msg: &[u8],
         sk: &SecretKey
@@ -318,6 +330,7 @@ impl HinTS {
         hash_to_g2(msg).mul(sk).into_affine()
     }
 
+    /// verifies the partial signature under the signer's public key
     pub fn partial_verify(
         crs: &CRS,
         msg: &[u8],
@@ -329,18 +342,24 @@ impl HinTS {
         lhs == rhs
     }
 
+    /// aggregates partial signatures to construct a threshold signature
     pub fn aggregate(
         crs: &CRS,
         ak: &AggregationKey,
         vk: &VerificationKey,
-        bitmap: &Vec<F>,
-        partial_signatures: &Vec<Option<PartialSignature>>
+        partial_signatures: &HashMap<usize, PartialSignature>
     ) -> ThresholdSignature {
         // compute the nth root of unity
         let n = ak.n;
-    
-        //adjust the weights and bitmap polynomials
+        let n_inv = F::from(1) / F::from(n as u64);
 
+        // compute bitmap based on entries in partial_signatures
+        let mut bitmap: Vec<F> = vec![F::from(0); n];
+        for (i, _sig) in partial_signatures.iter() {
+            bitmap[*i] = F::from(1);
+        }
+
+        //adjust the weights and bitmap polynomials
         // the weights vector is of size power of 2 - 1; lets pad
         let mut weights = ak.weights.clone();
         //compute sum of weights of active signers
@@ -348,13 +367,11 @@ impl HinTS {
             .iter()
             .zip(weights.iter())
             .fold(F::from(0), |acc, (&x, &y)| acc + (x * y));
+        
         //weight's last element must the additive inverse of active weight
-        weights.push(F::from(0) - total_active_weight);
-    
-        // bitmap needs to pad with 1 to activate the last weight
-        let mut bitmap = bitmap.clone();
-        //bitmap's last element must be 1 for our scheme
-        bitmap.push(F::from(1));
+        weights[n-1] = F::from(0) - total_active_weight;
+        // last element of bitmap must be 1 for our scheme
+        bitmap[n-1] = F::from(1);
     
         //compute all the scalars we will need in the prover
         let ω: F = utils::nth_root_of_unity(n);
@@ -381,16 +398,24 @@ impl HinTS {
         let b_wff_q_of_x = t_of_x.div(&z_of_x);
     
         //L_{n−1}(X) · (b(X) - 1) = Z(X) · Q4(X)
-        let t_of_x = l_n_minus_1_of_x.clone().mul(
-            &b_of_x.clone().sub(&utils::compute_constant_poly(&F::from(1))));
+        let one_poly = utils::compute_constant_poly(&F::from(1));
+        let t_of_x = l_n_minus_1_of_x.mul(&b_of_x.sub(&one_poly));
         let b_check_q_of_x = t_of_x.div(&z_of_x);
     
         let qz_com = ipa(&ak.qz_terms, &bitmap);
         let qx_com = ipa(&ak.qx_terms, &bitmap);
         let qx_mul_tau_com = ipa(&ak.qx_mul_tau_terms, &bitmap);
 
-        let agg_pk = compute_aggregate_pubkey(&ak, &bitmap);
-        let agg_sig = compute_aggregate_signature(&partial_signatures, &bitmap);
+        // aggregate pubkey is the sum of all active public keys, multiplied by n_inv
+        // this is computed using the fn for inner product argument with bitmap
+        let agg_pk = ipa::<G1AffinePoint>(&ak.pks, &bitmap).mul(n_inv).into_affine();
+        
+        // aggregate sig is the sum of all partial signatures, multiplied by n_inv
+        let partial_sigs = partial_signatures
+            .values()
+            .map(|x| x.to_owned())
+            .collect::<Vec<PartialSignature>>();
+        let agg_sig = add::<G2AffinePoint>(partial_sigs).mul(n_inv).into_affine();
     
         let parsum_of_tau_com = KZG::commit_g1(&crs, &psw_of_x).unwrap();
         let b_of_tau_com = KZG::commit_g1(&crs, &b_of_x).unwrap();
@@ -422,7 +447,8 @@ impl HinTS {
         let psw_check_q_of_r_proof = KZG::compute_opening_proof(&crs, &psw_check_q_of_x, &r).unwrap();
         let b_wff_q_of_r_proof = KZG::compute_opening_proof(&crs, &b_wff_q_of_x, &r).unwrap();
         let b_check_q_of_r_proof = KZG::compute_opening_proof(&crs, &b_check_q_of_x, &r).unwrap();
-    
+
+        // batched opening argument as it is for the same point r
         let merged_proof: G1AffinePoint = (psw_of_r_proof
             + w_of_r_proof.mul(r.pow([1]))
             + b_of_r_proof.mul(r.pow([2]))
@@ -462,6 +488,8 @@ impl HinTS {
         }
     }
 
+    /// verifies whether the threshold signature is valid and 
+    /// satisfies the desired threshold fraction
     pub fn verify(
         crs: &CRS,
         msg: &[u8],
@@ -471,7 +499,8 @@ impl HinTS {
     ) -> bool {
 
         // check that the threshold is satisfied
-        check_or_return_false!(fraction.1 * π.agg_weight >= fraction.0 * vk.total_weight);
+        let (numerator, denominator) = fraction;
+        check_or_return_false!(denominator * π.agg_weight >= numerator * vk.total_weight);
 
         // verify the signature first
         check_or_return_false!(Self::partial_verify(crs, msg, &π.agg_pk, &π.agg_sig));
@@ -547,53 +576,55 @@ impl HinTS {
 
 }
 
+/// verifies whether the extended public key is well-formed
 fn verify_hint(
     crs: &CRS,
     hint: &ExtendedPublicKey
 ) -> bool {
     let i = hint.i;
-    let n = hint.qz_i_terms.len();
+
+    // sanity check on the hint
+    assert_eq!(hint.n, hint.qz_i_terms.len());
 
     //e([sk_i L_i(τ)]1, [1]2) = e([sk_i]1, [L_i(τ)]2)
-    let l_i_of_x = utils::lagrange_poly(n, i);
-    let z_of_x = utils::compute_vanishing_poly(n);
+    let l_i_of_x = utils::lagrange_poly(hint.n, i);
+    let z_of_x = utils::compute_vanishing_poly(hint.n);
 
-    let l_i_of_tau_com = KZG::commit_g2(&crs, &l_i_of_x).expect("commitment failed");
+    let l_i_of_tau_com = KZG::commit_g2(&crs, &l_i_of_x).unwrap();
     let lhs = <Curve as Pairing>::pairing(hint.sk_i_l_i_of_tau_com_1, crs.powers_of_h[0]);
     let rhs = <Curve as Pairing>::pairing(hint.pk_i, l_i_of_tau_com);
     check_or_return_false!(lhs == rhs);
 
-    for j in 0..n {
+    for j in 0..hint.n {
         let num: DensePolynomial<F>;
         if i == j {
             num = l_i_of_x.clone().mul(&l_i_of_x).sub(&l_i_of_x);
         } else { //cross-terms
-            let l_j_of_x = utils::lagrange_poly(n, j);
+            let l_j_of_x = utils::lagrange_poly(hint.n, j);
             num = l_j_of_x.mul(&l_i_of_x);
         }
         let f = num.div(&z_of_x);
 
         //f = li^2 - l_i / z or li lj / z
-        let f_com = KZG::commit_g2(&crs, &f).expect("commitment failed");
+        let f_com = KZG::commit_g2(&crs, &f).unwrap();
         
         let lhs = <Curve as Pairing>::pairing(hint.qz_i_terms[j], crs.powers_of_h[0]);
         let rhs = <Curve as Pairing>::pairing(hint.pk_i, f_com);
         check_or_return_false!(lhs == rhs);
     }
 
-    let x_monomial = utils::compute_x_monomial();
     let l_i_of_0 = l_i_of_x.evaluate(&F::from(0));
     let l_i_of_0_poly = utils::compute_constant_poly(&l_i_of_0);
 
     //numerator is l_i(x) - l_i(0)
     let num = l_i_of_x.sub(&l_i_of_0_poly);
     //denominator is x
-    let den = x_monomial.clone();
+    let den = utils::compute_x_monomial();
 
     //qx_term = (l_i(x) - l_i(0)) / x
     let qx_term = &num.div(&den);
     //qx_term_com = [ sk_i * (l_i(τ) - l_i(0)) / τ ]_1
-    let qx_term_com = KZG::commit_g2(&crs, &qx_term).expect("commitment failed");
+    let qx_term_com = KZG::commit_g2(&crs, &qx_term).unwrap();
     let lhs = <Curve as Pairing>::pairing(hint.qx_i_term, crs.powers_of_h[0]);
     let rhs = <Curve as Pairing>::pairing(hint.pk_i, qx_term_com);
     check_or_return_false!(lhs == rhs);
@@ -601,7 +632,7 @@ fn verify_hint(
     //qx_term_mul_tau = (l_i(x) - l_i(0))
     let qx_term_mul_tau = &num;
     //qx_term_mul_tau_com = [ (l_i(τ) - l_i(0)) ]_1
-    let qx_term_mul_tau_com = KZG::commit_g2(&crs, &qx_term_mul_tau).expect("commitment failed");
+    let qx_term_mul_tau_com = KZG::commit_g2(&crs, &qx_term_mul_tau).unwrap();
     let lhs = <Curve as Pairing>::pairing(hint.qx_i_term_mul_tau, crs.powers_of_h[0]);
     let rhs = <Curve as Pairing>::pairing(hint.pk_i, qx_term_mul_tau_com);
     check_or_return_false!(lhs == rhs);
@@ -609,7 +640,7 @@ fn verify_hint(
     true
 }
 
-//RO(SK, W, B, ParSum, Qx, Qz, Qx(τ ) · τ, Q1, Q2, Q3, Q4)
+/// computes a hash for the Fiat-Shamir heuristic
 fn random_oracle(
     sk_com: G2AffinePoint,
     w_com: G1AffinePoint,
@@ -646,11 +677,9 @@ fn random_oracle(
     hash_values[1] = u64::from_le_bytes(hash_bytes[8..16].try_into().unwrap());
     hash_values[2] = u64::from_le_bytes(hash_bytes[16..24].try_into().unwrap());
     hash_values[3] = u64::from_le_bytes(hash_bytes[24..32].try_into().unwrap());
-    //hash_values[3] = u64::from(0u64);
 
     let bi = BigInteger256::new(hash_values);
 
-    //let input: [u8; 32] = [0u8; 32];
     F::try_from(bi).unwrap()
 }
 
@@ -680,13 +709,13 @@ fn verify_openings_in_proof(
     let adjustment_com = vk.l_n_minus_1_of_tau_com.mul(adjustment);
     let w_of_x_com: G1AffinePoint = (vk.w_of_tau_com + adjustment_com).into();
 
-    let psw_of_r_argument = π.parsum_of_tau_com - vk.g_0.clone().mul(π.parsum_of_r).into_affine();
-    let w_of_r_argument = w_of_x_com - vk.g_0.clone().mul(π.w_of_r).into_affine();
-    let b_of_r_argument = π.b_of_tau_com - vk.g_0.clone().mul(π.b_of_r).into_affine();
-    let psw_wff_q_of_r_argument = π.q1_of_tau_com - vk.g_0.clone().mul(π.q1_of_r).into_affine();
-    let psw_check_q_of_r_argument = π.q3_of_tau_com - vk.g_0.clone().mul(π.q3_of_r).into_affine();
-    let b_wff_q_of_r_argument = π.q2_of_tau_com - vk.g_0.clone().mul(π.q2_of_r).into_affine();
-    let b_check_q_of_r_argument = π.q4_of_tau_com - vk.g_0.clone().mul(π.q4_of_r).into_affine();
+    let psw_of_r_argument = π.parsum_of_tau_com - vk.g_0.mul(π.parsum_of_r).into_affine();
+    let w_of_r_argument = w_of_x_com - vk.g_0.mul(π.w_of_r).into_affine();
+    let b_of_r_argument = π.b_of_tau_com - vk.g_0.mul(π.b_of_r).into_affine();
+    let psw_wff_q_of_r_argument = π.q1_of_tau_com - vk.g_0.mul(π.q1_of_r).into_affine();
+    let psw_check_q_of_r_argument = π.q3_of_tau_com - vk.g_0.mul(π.q3_of_r).into_affine();
+    let b_wff_q_of_r_argument = π.q2_of_tau_com - vk.g_0.mul(π.q2_of_r).into_affine();
+    let b_check_q_of_r_argument = π.q4_of_tau_com - vk.g_0.mul(π.q4_of_r).into_affine();
 
     let merged_argument: G1AffinePoint = (psw_of_r_argument
         + w_of_r_argument.mul(r.pow([1]))
@@ -701,58 +730,19 @@ fn verify_openings_in_proof(
         vk.h_0);
     let rhs = <Curve as Pairing>::pairing(
         π.opening_proof_r, 
-        vk.h_1 - vk.h_0.clone().mul(r).into_affine());
+        vk.h_1 - vk.h_0.mul(r).into_affine());
     check_or_return_false!(lhs == rhs);
 
     let ω: F = utils::nth_root_of_unity(vk.n);
     let r_div_ω: F = r / ω;
 
     verify_opening(
-        vk, 
-        &π.parsum_of_tau_com, 
-        &r_div_ω, 
-        &π.parsum_of_r_div_ω, 
+        vk,
+        &π.parsum_of_tau_com,
+        &r_div_ω,
+        &π.parsum_of_r_div_ω,
         &π.opening_proof_r_div_ω
     )
-}
-
-fn compute_aggregate_pubkey(
-    pp: &AggregationKey, 
-    bitmap: &Vec<F>
-) -> G1AffinePoint {
-    let n = bitmap.len();
-    let mut exponents: Vec<F> = vec![];
-    let n_inv = F::from(1) / F::from(n as u64);
-    for i in 0..n {
-        let l_i_of_0 = n_inv;
-        let active = bitmap[i] == F::from(1);
-        exponents.push(if active { l_i_of_0 } else { F::from(0) });
-    }
-
-    <<Curve as Pairing>::G1 as VariableBaseMSM>
-        ::msm(&pp.pks[..], &exponents).unwrap().into_affine()
-}
-
-fn compute_aggregate_signature(
-    partial_signatures: &Vec<Option<PartialSignature>>,
-    bitmap: &Vec<F>
-) -> G2AffinePoint {
-    let n = bitmap.len();
-    let n_inv = F::from(1) / F::from(n as u64);
-
-    // add up all the partial signatures that are not none
-    let aggregated_signature = partial_signatures
-        .iter()
-        .zip(bitmap.iter())
-        .fold(G2AffinePoint::zero(), |acc, (sig, &bit)| {
-            if sig.is_some() && bit == F::from(1) {
-                acc.add(sig.unwrap().mul(n_inv)).into_affine()
-            } else {
-                acc
-            }
-        });
-
-    aggregated_signature
 }
 
 fn preprocess_qz_contributions(
@@ -797,27 +787,24 @@ fn compute_psw_poly(
     eval_form.interpolate()    
 }
 
-/// computes the inner product argument
-fn ipa(elements: &Vec<G1AffinePoint>, bitmap: &Vec<F>) -> G1AffinePoint {
+/// computes the inner product argument between a vector of group elements and bitvector
+fn ipa<T: AffineRepr>(elements: &Vec<T>, bitmap: &Vec<F>) -> T {
     elements
     .iter()
     .zip(bitmap.iter())
-    .fold(G1AffinePoint::zero(), |acc, (elem, bit)| {
-        if *bit == F::from(1) {
-            acc.add(elem).into_affine()
-        } else {
-            acc
-        }
+    .fold(T::zero(), |acc, (elem, bit)| {
+        if *bit == F::from(1) { acc.add(elem).into_affine() } else { acc }
     })
 }
 
-/// adds up all elements in a list
-fn add(elements: &Vec<G2AffinePoint>) -> G2AffinePoint{
+/// adds up all the group elements in a collection
+fn add<T: AffineRepr>(elements: impl IntoIterator<Item = T>) -> T {
     elements
-        .iter()
-        .fold(G2AffinePoint::zero(), |acc, x| acc.add(x).into_affine())
+        .into_iter()
+        .fold(T::zero(), |acc, x| acc.add(&x).into_affine())
 }
 
+/// hashes a byte array to an elliptic curve group element
 pub fn hash_to_g2(msg: impl AsRef<[u8]>) -> G2AffinePoint {
     const DST_G2: &str = "BLS_SIG_BLS12381G2_XMD:SHA-256_SSWU_RO_POP_";
     let g2_mapper = MapToCurveBasedHasher::<
@@ -841,6 +828,7 @@ mod tests {
     #[test]
     fn it_works() {
         let n = 32;
+        let num_signers = n - 1;
         println!("n = {}", n);
 
         let msg = b"hello";
@@ -852,41 +840,44 @@ mod tests {
     
         // -------------- sample universe specific values ---------------
         //sample random keys
-        let mut sk: Vec<F> = (0..n-1)
+        let sks: Vec<F> = (0..num_signers)
             .map(|_| HinTS::keygen(rng))
             .collect();
-        sk.push(F::from(0)); //last element must be 0 for the math to work
 
-        let epk = (0..n)
-            .map(|i| HinTS::hint_gen(&params, n, i, &sk[i]))
+        let epks = (0..num_signers)
+            .map(|i| HinTS::hint_gen(&params, n, i, &sks[i]))
             .collect::<Vec<ExtendedPublicKey>>();
 
         //sample random weights for each party
-        let weights = sample_weights(n - 1);
+        let weights = sample_weights(num_signers);
     
         // -------------- perform universe setup ---------------
+        let signers_info: HashMap<usize, (Weight, ExtendedPublicKey)> = (0..num_signers)
+            .map(|i| (i, (weights[i], epks[i].clone())))
+            .collect();
+
         //run universe setup
-        let (vk, ak) = HinTS::preprocess(n, &params, &weights, &epk);
+        let (vk, ak) = HinTS::preprocess(n, &params, &signers_info);
     
         // -------------- sample proof specific values ---------------
         //samples n-1 random bits
-        let bitmap = sample_bitmap(n - 1, 0.95);
+        let bitmap = sample_bitmap(num_signers, 0.75);
 
         // for all the active parties, sample partial signatures
-        let partial_signatures = (0..n-1)
-            .map(|i| {
-                if bitmap[i] == F::from(1) {
-                    let sig = HinTS::sign(msg, &sk[i]);
-                    let valid = HinTS::partial_verify(&params, msg, &epk[i].pk_i, &sig);
-                    if valid { Some(sig) } else { None }
-                } else {
-                    None
+        // filter our bitmap indices that are 1
+        let mut partial_signatures = HashMap::new();
+        bitmap.iter().enumerate().for_each(|(i, &bit)| {
+            if bit == F::from(1) {
+                let sig = HinTS::sign(msg, &sks[i]);
+                let valid = HinTS::partial_verify(&params, msg, &epks[i].pk_i, &sig);
+                if valid {
+                    partial_signatures.insert(i, sig);
                 }
-            })
-            .collect::<Vec<Option<G2AffinePoint>>>();
+            }
+        });
     
         let start = Instant::now();
-        let π = HinTS::aggregate(&params, &ak, &vk, &bitmap, &partial_signatures);
+        let π = HinTS::aggregate(&params, &ak, &vk, &partial_signatures);
         let duration = start.elapsed();
         println!("Time elapsed in prover is: {:?}", duration);
         
