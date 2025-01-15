@@ -913,6 +913,9 @@ mod tests {
         let mut π_attack = π.clone();
         π_attack.agg_weight = F::from(1000000000); // some arbitrary weight
         assert!(!HinTS::verify(&params, msg, &vk, &π_attack, threshold));
+
+        // try a really high threshold of 99%
+        assert!(!HinTS::verify(&params, msg, &vk, &π_attack, (F::from(99), F::from(100))));
     }
 
     fn sample_weights(n: usize) -> Vec<F> {
