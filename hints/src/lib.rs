@@ -7,27 +7,25 @@ use ark_poly::{
     Evaluations
 };
 use ark_std::{UniformRand, ops::*};
-use ark_bls12_381::{
-    Bls12_381,
-    g1::Config as G1Config,
-    g2::Config as G2Config
-};
+use ark_bls12_381::{Bls12_381, g1::Config as G1Config, g2::Config as G2Config};
 use ark_ec::pairing::Pairing;
 use ark_ec::{AffineRepr, CurveGroup, short_weierstrass::{Affine, Projective}};
 use ark_ec::VariableBaseMSM;
-use ark_ec::hashing::curve_maps::wb::WBMap;
-use ark_ec::hashing::map_to_curve_hasher::MapToCurveBasedHasher;
-use ark_ec::hashing::HashToCurve;
+use ark_ec::hashing::{curve_maps::wb::WBMap, map_to_curve_hasher::MapToCurveBasedHasher, HashToCurve};
 use ark_ff::{Field, field_hashers::DefaultFieldHasher, BigInteger256};
 use sha2::{Digest, Sha256};
 
-use kzg::*;
-
+// hinTS depends on the utils and kzg modules
 mod utils;
 mod kzg;
 
+/// Pairing friendly curve powering the hinTS scheme
 type Curve = Bls12_381;
-type KZG = KZG10::<Curve, DensePolynomial<<Curve as Pairing>::ScalarField>>;
+/// KZG polynomial commitment scheme
+type KZG = kzg::KZG10::<Curve, DensePolynomial<<Curve as Pairing>::ScalarField>>;
+/// Common reference string for the hinTS scheme
+type CRS = kzg::UniversalParams<Curve>;
+/// Scalar Field
 type F = ark_bls12_381::Fr;
 /// Represents a point in G1 (affine coordinates)
 pub type G1AffinePoint = Affine<G1Config>;
@@ -38,13 +36,17 @@ pub type G1ProjectivePoint = Projective<G1Config>;
 /// Represents a point in G2 (projective coordinates)
 pub type G2ProjectivePoint = Projective<G2Config>;
 
+/// Type denoting a partial signature
 pub type PartialSignature = G2AffinePoint;
+/// Type denoting secret key
 pub type SecretKey = F;
+/// Type denoting public key
 pub type PublicKey = G1AffinePoint;
+/// Type denoting a signer's weight
 pub type Weight = F;
 
 #[derive(Clone, Debug, PartialEq, CanonicalDeserialize, CanonicalSerialize)]
-/// hinTS signature
+/// hinTS aggregate signature
 pub struct ThresholdSignature {
     /// aggregate public key (aPK in the paper)
     agg_pk: G1AffinePoint,
@@ -140,6 +142,7 @@ pub struct AggregationKey {
 }
 
 #[derive(Clone, Debug, PartialEq, CanonicalDeserialize, CanonicalSerialize)]
+/// structure containing the verification key required to verify a hinTS signature
 pub struct VerificationKey {
     /// the universe has n - 1 parties (where n is a power of 2)
     n: usize,
@@ -163,7 +166,7 @@ pub struct VerificationKey {
     tau_com: G2AffinePoint
 }
 
-pub struct HinTS { }
+pub struct HinTS;
 
 impl HinTS {
 
@@ -174,7 +177,7 @@ impl HinTS {
 
     /// generates the extended public key
     pub fn hint_gen(
-        crs: &UniversalParams<Curve>,
+        crs: &CRS,
         n: usize, 
         i: usize, 
         sk_i: &SecretKey
@@ -243,7 +246,7 @@ impl HinTS {
     /// and outputs the network's verification key and aggregation key
     pub fn preprocess(
         n: usize,
-        crs: &UniversalParams<Curve>,
+        crs: &CRS,
         w: &Vec<Weight>,
         epk: &Vec<ExtendedPublicKey>
     ) -> (VerificationKey, AggregationKey) {
@@ -287,8 +290,7 @@ impl HinTS {
             h_1: crs.powers_of_h[1].clone(),
             l_n_minus_1_of_tau_com: KZG::commit_g1(&crs, &l_n_minus_1_of_x).unwrap(),
             w_of_tau_com: KZG::commit_g1(&crs, &w_of_x).unwrap(),
-            // combine all sk_i l_i_of_x commitments to get commitment to sk(x)
-            sk_of_tau_com: add_all_g2(&crs, &sk_l_of_tau_coms),
+            sk_of_tau_com: add(&sk_l_of_tau_coms),
             z_of_tau_com: KZG::commit_g2(&crs, &z_of_x).unwrap(),
             tau_com: KZG::commit_g2(&crs, &x_monomial).unwrap(),
         };
@@ -314,7 +316,7 @@ impl HinTS {
     }
 
     pub fn partial_verify(
-        crs: &UniversalParams<Curve>,
+        crs: &CRS,
         msg: &[u8],
         pk: &PublicKey,
         sig: &PartialSignature
@@ -325,7 +327,7 @@ impl HinTS {
     }
 
     pub fn aggregate(
-        crs: &UniversalParams<Curve>,
+        crs: &CRS,
         ak: &AggregationKey,
         vk: &VerificationKey,
         bitmap: &Vec<F>,
@@ -381,9 +383,9 @@ impl HinTS {
             &b_of_x.clone().sub(&utils::compute_constant_poly(&F::from(1))));
         let b_check_q_of_x = t_of_x.div(&z_of_x);
     
-        let qz_com = filter_and_add(&crs, &ak.qz_terms, &bitmap);
-        let qx_com = filter_and_add(&crs, &ak.qx_terms, &bitmap);
-        let qx_mul_tau_com = filter_and_add(&crs, &ak.qx_mul_tau_terms, &bitmap);
+        let qz_com = ipa(&ak.qz_terms, &bitmap);
+        let qx_com = ipa(&ak.qx_terms, &bitmap);
+        let qx_mul_tau_com = ipa(&ak.qx_mul_tau_terms, &bitmap);
 
         let agg_pk = compute_aggregate_pubkey(&ak, &bitmap);
         let agg_sig = compute_aggregate_signature(&partial_signatures, &bitmap);
@@ -459,17 +461,15 @@ impl HinTS {
     }
 
     pub fn verify(
-        crs: &UniversalParams<Curve>,
+        crs: &CRS,
         msg: &[u8],
         vk: &VerificationKey,
         π: &ThresholdSignature,
-        threshold_fraction: (F, F) // e.g. (1,3) to denote 1/3 threshold
+        fraction: (F, F) // e.g. (1,3) to denote 1/3 threshold
     ) -> bool {
 
         // check that the threshold is satisfied
-        check_or_return_false!(
-            threshold_fraction.1 * π.agg_weight >= threshold_fraction.0 * vk.total_weight
-        );
+        check_or_return_false!(fraction.1 * π.agg_weight >= fraction.0 * vk.total_weight);
 
         // verify the signature first
         check_or_return_false!(Self::partial_verify(crs, msg, &π.agg_pk, &π.agg_sig));
@@ -556,7 +556,7 @@ macro_rules! check_or_return_false {
 }
 
 fn verify_hint(
-    crs: &UniversalParams<Curve>,
+    crs: &CRS,
     hint: &ExtendedPublicKey
 ) -> bool {
     let i = hint.i;
@@ -804,29 +804,25 @@ fn compute_psw_poly(
     eval_form.interpolate()    
 }
 
-fn filter_and_add(
-    crs: &UniversalParams<Curve>, 
-    elements: &Vec<G1AffinePoint>, 
-    bitmap: &Vec<F>
-) -> G1AffinePoint {
-    let mut com = KZG::commit_g1(crs, &utils::compute_constant_poly(&F::from(0))).unwrap();
-    for i in 0..bitmap.len() {
-        if bitmap[i] == F::from(1) {
-            com = com.add(elements[i]).into_affine();
+/// computes the inner product argument
+fn ipa(elements: &Vec<G1AffinePoint>, bitmap: &Vec<F>) -> G1AffinePoint {
+    elements
+    .iter()
+    .zip(bitmap.iter())
+    .fold(G1AffinePoint::zero(), |acc, (elem, bit)| {
+        if *bit == F::from(1) {
+            acc.add(elem).into_affine()
+        } else {
+            acc
         }
-    }
-    com
+    })
 }
 
-fn add_all_g2(
-    crs: &UniversalParams<Curve>, 
-    elements: &Vec<G2AffinePoint>
-) -> G2AffinePoint {
-    let mut com = KZG::commit_g2(crs, &utils::compute_constant_poly(&F::from(0))).unwrap();
-    for i in 0..elements.len() {
-        com = com.add(elements[i]).into_affine();
-    }
-    com
+/// adds up all elements in a list
+fn add(elements: &Vec<G2AffinePoint>) -> G2AffinePoint{
+    elements
+        .iter()
+        .fold(G2AffinePoint::zero(), |acc, x| acc.add(x).into_affine())
 }
 
 pub fn hash_to_g2(msg: impl AsRef<[u8]>) -> G2AffinePoint {
