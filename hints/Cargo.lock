@@ -576,7 +576,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "hints"
+name = "hints-bls12381"
 version = "0.1.0"
 dependencies = [
  "ark-bls12-381",
