@@ -18,7 +18,7 @@ use sha2::{Digest, Sha256};
 // hinTS depends on the utils and kzg modules
 use crate::utils;
 use crate::kzg;
-use crate::check_or_return_false;
+use crate::{assert_power_of_2, check_or_return_false};
 
 /// Pairing friendly curve powering the hinTS scheme
 type Curve = Bls12_381;
@@ -123,7 +123,7 @@ pub struct ExtendedPublicKey {
 #[derive(Clone, Debug, PartialEq, CanonicalDeserialize, CanonicalSerialize)]
 /// AggregationKey contains all material needed by Prover to produce a hinTS proof
 pub struct AggregationKey {
-    /// number of parties plus one (must be a power of 2)
+    /// number of parties in the universe plus one (must be a power of 2)
     n: usize,
     /// weights has all parties' weights, where weights[i] is party i's weight
     weights: Vec<Weight>,
@@ -183,6 +183,8 @@ impl HinTS {
         i: usize, 
         sk_i: &SecretKey
     ) -> ExtendedPublicKey {
+        assert_power_of_2!(n);
+
         //let us compute the q1 term
         let l_i_of_x = utils::lagrange_poly(n, i);
         let z_of_x = utils::compute_vanishing_poly(n);
@@ -201,8 +203,7 @@ impl HinTS {
             let f = num.div(&z_of_x);
             let sk_times_f = utils::poly_eval_mult_c(&f, &sk_i);
     
-            let com = KZG::commit_g1(&crs, &sk_times_f)
-                .expect("commitment failed");
+            let com = KZG::commit_g1(&crs, &sk_times_f).expect("commitment failed");
     
             qz_terms.push(com);
         }
@@ -251,6 +252,7 @@ impl HinTS {
         w: &Vec<Weight>,
         epk: &Vec<ExtendedPublicKey>
     ) -> (VerificationKey, AggregationKey) {
+        assert_power_of_2!(n);
 
         // let us first pad the weights to a power of 2 size to compute a commitment
         let mut weights = w.clone();
@@ -355,8 +357,7 @@ impl HinTS {
         bitmap.push(F::from(1));
     
         //compute all the scalars we will need in the prover
-        let domain = Radix2EvaluationDomain::<F>::new(n as usize).unwrap();
-        let ω: F = domain.group_gen;
+        let ω: F = utils::nth_root_of_unity(n);
         let ω_inv: F = F::from(1) / ω;
     
         //compute all the polynomials we will need in the prover
@@ -475,9 +476,8 @@ impl HinTS {
         // verify the signature first
         check_or_return_false!(Self::partial_verify(crs, msg, &π.agg_pk, &π.agg_sig));
 
-        // compute root of unity
-        let domain = Radix2EvaluationDomain::<F>::new(vk.n as usize).unwrap();
-        let ω: F = domain.group_gen;
+        // compute nth root of unity
+        let ω: F = utils::nth_root_of_unity(vk.n);
     
         //RO(SK, W, B, ParSum, Qx, Qz, Qx(τ ) · τ, Q1, Q2, Q3, Q4)
         let r = random_oracle(
@@ -704,8 +704,7 @@ fn verify_openings_in_proof(
         vk.h_1 - vk.h_0.clone().mul(r).into_affine());
     check_or_return_false!(lhs == rhs);
 
-    let domain = Radix2EvaluationDomain::<F>::new(vk.n as usize).unwrap();
-    let ω: F = domain.group_gen;
+    let ω: F = utils::nth_root_of_unity(vk.n);
     let r_div_ω: F = r / ω;
 
     verify_opening(
@@ -784,6 +783,8 @@ fn compute_psw_poly(
     bitmap: &Vec<F>
 ) -> DensePolynomial<F> {
     let n = weights.len(); //power of 2 size
+    assert_power_of_2!(n);
+
     let mut parsum = F::from(0);
     let mut evals = vec![];
     for i in 0..n {
@@ -827,15 +828,6 @@ pub fn hash_to_g2(msg: impl AsRef<[u8]>) -> G2AffinePoint {
     .unwrap();
     let q: G2AffinePoint = g2_mapper.hash(msg.as_ref()).unwrap();
     q
-}
-
-#[macro_export]
-macro_rules! check_or_return_false {
-    ($cond:expr) => {
-        if !$cond {
-            return false;
-        }
-    };
 }
 
 #[cfg(test)]

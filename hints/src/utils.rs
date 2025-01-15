@@ -8,17 +8,21 @@ use ark_poly::{
     Radix2EvaluationDomain,
     Evaluations
 };
+use crate::assert_power_of_2;
 
 //returns t(X) = X^n - 1
 pub fn compute_vanishing_poly<F: PrimeField + From<u64>>(n: usize) -> DensePolynomial<F> {
+    assert_power_of_2!(n);
+
     let mut coeffs = vec![];
     for i in 0..n+1 {
         if i == 0 {
-            coeffs.push(F::from(0u64) - F::from(1u64)); // -1
-        } else if i == n {
-            coeffs.push(F::from(1u64)); // X^n
+            let minus_one: F = F::from(0u64) - F::from(1u64);
+            coeffs.push(minus_one); // 0'th coefficient is -1
+        } else if i < n {
+            coeffs.push(F::from(0u64)); // all other coefficients are 0
         } else {
-            coeffs.push(F::from(0u64));
+            coeffs.push(F::from(1u64)); // n'th coefficient is 1 for X^n
         }
     }
     DensePolynomial { coeffs }
@@ -27,15 +31,12 @@ pub fn compute_vanishing_poly<F: PrimeField + From<u64>>(n: usize) -> DensePolyn
 /// interpolate polynomial which evaluates to points in v
 /// the domain is the powers of n-th root of unity, where n is size of v
 /// assumes n is a power of 2
-pub fn interpolate_poly_over_mult_subgroup<F: PrimeField + From<u64>>(v: &Vec<F>) -> DensePolynomial<F> {
-    let n = v.len();
-    let mut evals = vec![];
-    for i in 0..n {
-        evals.push(v[i]);
-    }
+pub fn interpolate_poly_over_mult_subgroup<F: PrimeField + From<u64>>(evals: &Vec<F>) -> DensePolynomial<F> {
+    let n = evals.len();
+    assert_power_of_2!(n);
 
     let domain = Radix2EvaluationDomain::<F>::new(n).unwrap();
-    let eval_form = Evaluations::from_vec_and_domain(evals, domain);
+    let eval_form = Evaluations::from_vec_and_domain(evals.to_owned(), domain);
     eval_form.interpolate()
 }
 
@@ -87,4 +88,28 @@ pub fn poly_eval_mult_c<F: PrimeField>(f: &DensePolynomial<F>, c: &F) -> DensePo
         new_poly.coeffs[i] = new_poly.coeffs[i] * c.clone();
     }
     new_poly
+}
+
+/// returns a generator of the multiplicative subgroup of input size n
+pub fn nth_root_of_unity<F: PrimeField>(n: usize) -> F {
+    assert_power_of_2!(n);
+
+    let domain = Radix2EvaluationDomain::<F>::new(n).unwrap();
+    domain.group_gen
+}
+
+#[macro_export]
+macro_rules! assert_power_of_2 {
+    ($x:expr) => {
+        assert!($x > 0 && ($x & ($x - 1)) == 0, "{} is not a power of 2", $x);
+    };
+}
+
+#[macro_export]
+macro_rules! check_or_return_false {
+    ($cond:expr) => {
+        if !$cond {
+            return false;
+        }
+    };
 }
