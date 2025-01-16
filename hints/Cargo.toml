@@ -15,9 +15,5 @@ ark-serialize = { version = "^0.4.0", default-features = true }
 num-bigint = { version = "^0.4.0", default-features = false }
 rand = { version = "^0.8.0" }
 
-[features]
-asm = [ "ark-ff/asm" ]
-parallel = [ "ark-std/parallel", "ark-ff/parallel",  "ark-ec/parallel", ]
-
 [profile.dev]
 opt-level = 3
