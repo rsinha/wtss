@@ -1,3 +1,18 @@
+//
+// Copyright (C) 2024 Hedera Hashgraph, LLC
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//      http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
 use ark_serialize::{CanonicalSerialize, CanonicalDeserialize};
 use ark_poly::{
     Polynomial,
@@ -246,6 +261,70 @@ impl HinTS {
         }
     }
 
+    /// verifies whether the extended public key is well-formed
+    pub fn verify_hint(
+        crs: &CRS,
+        hint: &ExtendedPublicKey
+    ) -> bool {
+        let i = hint.i;
+
+        // sanity check on the hint
+        assert_eq!(hint.n, hint.qz_i_terms.len());
+
+        //e([sk_i L_i(τ)]1, [1]2) = e([sk_i]1, [L_i(τ)]2)
+        let l_i_of_x = utils::lagrange_poly(hint.n, i);
+        let z_of_x = utils::compute_vanishing_poly(hint.n);
+
+        let l_i_of_tau_com = KZG::commit_g2(&crs, &l_i_of_x).unwrap();
+        let lhs = <Curve as Pairing>::pairing(hint.sk_i_l_i_of_tau_com_1, crs.powers_of_h[0]);
+        let rhs = <Curve as Pairing>::pairing(hint.pk_i, l_i_of_tau_com);
+        check_or_return_false!(lhs == rhs);
+
+        for j in 0..hint.n {
+            let num: DensePolynomial<F>;
+            if i == j {
+                num = l_i_of_x.clone().mul(&l_i_of_x).sub(&l_i_of_x);
+            } else { //cross-terms
+                let l_j_of_x = utils::lagrange_poly(hint.n, j);
+                num = l_j_of_x.mul(&l_i_of_x);
+            }
+            let f = num.div(&z_of_x);
+
+            //f = li^2 - l_i / z or li lj / z
+            let f_com = KZG::commit_g2(&crs, &f).unwrap();
+            
+            let lhs = <Curve as Pairing>::pairing(hint.qz_i_terms[j], crs.powers_of_h[0]);
+            let rhs = <Curve as Pairing>::pairing(hint.pk_i, f_com);
+            check_or_return_false!(lhs == rhs);
+        }
+
+        let l_i_of_0 = l_i_of_x.evaluate(&F::from(0));
+        let l_i_of_0_poly = utils::compute_constant_poly(&l_i_of_0);
+
+        //numerator is l_i(x) - l_i(0)
+        let num = l_i_of_x.sub(&l_i_of_0_poly);
+        //denominator is x
+        let den = utils::compute_x_monomial();
+
+        //qx_term = (l_i(x) - l_i(0)) / x
+        let qx_term = &num.div(&den);
+        //qx_term_com = [ sk_i * (l_i(τ) - l_i(0)) / τ ]_1
+        let qx_term_com = KZG::commit_g2(&crs, &qx_term).unwrap();
+        let lhs = <Curve as Pairing>::pairing(hint.qx_i_term, crs.powers_of_h[0]);
+        let rhs = <Curve as Pairing>::pairing(hint.pk_i, qx_term_com);
+        check_or_return_false!(lhs == rhs);
+
+        //qx_term_mul_tau = (l_i(x) - l_i(0))
+        let qx_term_mul_tau = &num;
+        //qx_term_mul_tau_com = [ (l_i(τ) - l_i(0)) ]_1
+        let qx_term_mul_tau_com = KZG::commit_g2(&crs, &qx_term_mul_tau).unwrap();
+        let lhs = <Curve as Pairing>::pairing(hint.qx_i_term_mul_tau, crs.powers_of_h[0]);
+        let rhs = <Curve as Pairing>::pairing(hint.pk_i, qx_term_mul_tau_com);
+        check_or_return_false!(lhs == rhs);
+
+        true
+    }
+
     /// preprocesses all signers' extended public keys and weights,
     /// and outputs the network's verification key and aggregation key
     pub fn preprocess(
@@ -279,9 +358,6 @@ impl HinTS {
         let mut sk_l_of_tau_coms: Vec<G2AffinePoint> = vec![Default::default(); n];
     
         for hint in epks {
-            //verify hint
-            verify_hint(crs, &hint);
-
             //extract necessary items for pre-processing
             qz_contributions[hint.i] = hint.qz_i_terms.clone();
             qx_contributions[hint.i] = hint.qx_i_term.clone();
@@ -573,71 +649,6 @@ impl HinTS {
     
         true
     }
-
-}
-
-/// verifies whether the extended public key is well-formed
-fn verify_hint(
-    crs: &CRS,
-    hint: &ExtendedPublicKey
-) -> bool {
-    let i = hint.i;
-
-    // sanity check on the hint
-    assert_eq!(hint.n, hint.qz_i_terms.len());
-
-    //e([sk_i L_i(τ)]1, [1]2) = e([sk_i]1, [L_i(τ)]2)
-    let l_i_of_x = utils::lagrange_poly(hint.n, i);
-    let z_of_x = utils::compute_vanishing_poly(hint.n);
-
-    let l_i_of_tau_com = KZG::commit_g2(&crs, &l_i_of_x).unwrap();
-    let lhs = <Curve as Pairing>::pairing(hint.sk_i_l_i_of_tau_com_1, crs.powers_of_h[0]);
-    let rhs = <Curve as Pairing>::pairing(hint.pk_i, l_i_of_tau_com);
-    check_or_return_false!(lhs == rhs);
-
-    for j in 0..hint.n {
-        let num: DensePolynomial<F>;
-        if i == j {
-            num = l_i_of_x.clone().mul(&l_i_of_x).sub(&l_i_of_x);
-        } else { //cross-terms
-            let l_j_of_x = utils::lagrange_poly(hint.n, j);
-            num = l_j_of_x.mul(&l_i_of_x);
-        }
-        let f = num.div(&z_of_x);
-
-        //f = li^2 - l_i / z or li lj / z
-        let f_com = KZG::commit_g2(&crs, &f).unwrap();
-        
-        let lhs = <Curve as Pairing>::pairing(hint.qz_i_terms[j], crs.powers_of_h[0]);
-        let rhs = <Curve as Pairing>::pairing(hint.pk_i, f_com);
-        check_or_return_false!(lhs == rhs);
-    }
-
-    let l_i_of_0 = l_i_of_x.evaluate(&F::from(0));
-    let l_i_of_0_poly = utils::compute_constant_poly(&l_i_of_0);
-
-    //numerator is l_i(x) - l_i(0)
-    let num = l_i_of_x.sub(&l_i_of_0_poly);
-    //denominator is x
-    let den = utils::compute_x_monomial();
-
-    //qx_term = (l_i(x) - l_i(0)) / x
-    let qx_term = &num.div(&den);
-    //qx_term_com = [ sk_i * (l_i(τ) - l_i(0)) / τ ]_1
-    let qx_term_com = KZG::commit_g2(&crs, &qx_term).unwrap();
-    let lhs = <Curve as Pairing>::pairing(hint.qx_i_term, crs.powers_of_h[0]);
-    let rhs = <Curve as Pairing>::pairing(hint.pk_i, qx_term_com);
-    check_or_return_false!(lhs == rhs);
-
-    //qx_term_mul_tau = (l_i(x) - l_i(0))
-    let qx_term_mul_tau = &num;
-    //qx_term_mul_tau_com = [ (l_i(τ) - l_i(0)) ]_1
-    let qx_term_mul_tau_com = KZG::commit_g2(&crs, &qx_term_mul_tau).unwrap();
-    let lhs = <Curve as Pairing>::pairing(hint.qx_i_term_mul_tau, crs.powers_of_h[0]);
-    let rhs = <Curve as Pairing>::pairing(hint.pk_i, qx_term_mul_tau_com);
-    check_or_return_false!(lhs == rhs);
-
-    true
 }
 
 /// computes a hash for the Fiat-Shamir heuristic
@@ -817,6 +828,16 @@ pub fn hash_to_g2(msg: impl AsRef<[u8]>) -> G2AffinePoint {
     q
 }
 
+pub fn serialize<T: CanonicalSerialize>(t: &T) -> Vec<u8> {
+    let mut buf = Vec::new();
+    t.serialize_uncompressed(&mut buf).unwrap();
+    buf
+}
+
+pub fn deserialize<T: CanonicalDeserialize>(buf: &[u8]) -> T {
+    T::deserialize_uncompressed(buf).unwrap()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -895,7 +916,7 @@ mod tests {
         let serialized_ak = serialize(&ak);
         let deserialized_ak = deserialize::<AggregationKey>(&serialized_ak);
 
-        let serialized_π = serialize(&π);
+        let serialized_π = super::serialize(&π);
         let deserialized_π = deserialize::<ThresholdSignature>(&serialized_π);
 
         assert_eq!(vk, deserialized_vk);
@@ -933,15 +954,5 @@ mod tests {
             bitmap.push(F::from(bit));
         }
         bitmap
-    }
-
-    fn serialize<T: CanonicalSerialize>(t: &T) -> Vec<u8> {
-        let mut buf = Vec::new();
-        t.serialize_uncompressed(&mut buf).unwrap();
-        buf
-    }
-
-    fn deserialize<T: CanonicalDeserialize>(buf: &[u8]) -> T {
-        T::deserialize_uncompressed(buf).unwrap()
     }
 }
