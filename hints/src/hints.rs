@@ -292,7 +292,7 @@ impl HinTS {
 
             //f = li^2 - l_i / z or li lj / z
             let f_com = KZG::commit_g2(&crs, &f).unwrap();
-            
+
             let lhs = <Curve as Pairing>::pairing(hint.qz_i_terms[j], crs.powers_of_h[0]);
             let rhs = <Curve as Pairing>::pairing(hint.pk_i, f_com);
             check_or_return_false!(lhs == rhs);
@@ -842,17 +842,99 @@ pub fn deserialize<T: CanonicalDeserialize>(buf: &[u8]) -> T {
 mod tests {
     use super::*;
 
-    use std::time::Instant;
     use ark_std::rand::Rng;
     use ark_std::test_rng;
 
     #[test]
-    fn it_works() {
-        let n = 32;
-        let num_signers = n - 1;
-        println!("n = {}", n);
+    fn test_serialization() {
+        let universe_n = 32;
+        let num_signers = universe_n - 1;
+        let msg = b"helloworld";
 
+        let (crs, ak, vk, sks, epks) = sample_universe(universe_n);
+        let sigs = sample_signing(num_signers, msg, &sks);
+        let π = HinTS::aggregate(&crs, &ak, &vk, &sigs);
+
+        // test (de)-serialization
+        let serialized_vk = serialize(&vk);
+        let deserialized_vk = deserialize::<VerificationKey>(&serialized_vk);
+
+        let serialized_ak = serialize(&ak);
+        let deserialized_ak = deserialize::<AggregationKey>(&serialized_ak);
+
+        let serialized_π = serialize(&π);
+        let deserialized_π = deserialize::<ThresholdSignature>(&serialized_π);
+
+        let serialized_sk = serialize(&sks[0]);
+        let deserialized_sk = deserialize::<SecretKey>(&serialized_sk);
+
+        let serialized_pk = serialize(&epks[0].pk_i);
+        let deserialized_pk = deserialize::<PublicKey>(&serialized_pk);
+
+        let serialized_epk = serialize(&epks[0]);
+        let deserialized_epk = deserialize::<ExtendedPublicKey>(&serialized_epk);
+
+        assert_eq!(vk, deserialized_vk);
+        assert_eq!(ak, deserialized_ak);
+        assert_eq!(π, deserialized_π);
+        assert_eq!(sks[0], deserialized_sk);
+        assert_eq!(epks[0].pk_i, deserialized_pk);
+        assert_eq!(epks[0], deserialized_epk);
+
+        // print out sizes for our information
+        println!("vk size: {}", serialized_vk.len());
+        println!("ak size: {}", serialized_ak.len());
+        println!("π size: {}", serialized_π.len());
+        println!("sk size: {}", serialized_sk.len());
+        println!("pk size: {}", serialized_pk.len());
+        println!("epk size: {}", serialized_epk.len());
+    }
+
+    #[test]
+    fn it_works() {
+        let universe_n = 32;
+        let num_signers = universe_n - 1;
         let msg = b"hello";
+
+        let (crs, ak, vk, sks, _) = sample_universe(universe_n);
+        let sigs = sample_signing(num_signers, msg, &sks);
+
+        let π = HinTS::aggregate(&crs, &ak, &vk, &sigs);
+
+        let threshold = (F::from(1), F::from(3)); // 1/3
+        assert!(HinTS::verify(&crs, msg, &vk, &π, threshold));
+
+        // attack the proof
+        let mut π_attack = π.clone();
+        π_attack.agg_weight = F::from(1000000000); // some arbitrary weight
+        assert!(!HinTS::verify(&crs, msg, &vk, &π_attack, threshold));
+
+        // try a really high threshold of 99%
+        assert!(!HinTS::verify(&crs, msg, &vk, &π_attack, (F::from(99), F::from(100))));
+    }
+
+    fn sample_signing(num_signers: usize, msg: &[u8], sks: &Vec<SecretKey>) -> HashMap<usize, PartialSignature> {
+        //samples n-1 random bits
+        let bitmap = sample_bitmap(num_signers, 0.75);
+
+        // for all the active parties, sample partial signatures
+        // filter our bitmap indices that are 1
+        let mut sigs = HashMap::new();
+        bitmap.iter().enumerate().for_each(|(i, &bit)| {
+            if bit == F::from(1) { sigs.insert(i, HinTS::sign(msg, &sks[i])); }
+        });
+
+        sigs
+    }
+
+    fn sample_universe(n: usize) -> (
+        CRS,
+        AggregationKey,
+        VerificationKey,
+        Vec<SecretKey>,
+        Vec<ExtendedPublicKey>
+    ) {
+        let num_signers = n - 1;
     
         // -------------- sample one-time SRS ---------------
         //run KZG setup
@@ -861,7 +943,7 @@ mod tests {
     
         // -------------- sample universe specific values ---------------
         //sample random keys
-        let sks: Vec<F> = (0..num_signers)
+        let sks: Vec<SecretKey> = (0..num_signers)
             .map(|_| HinTS::keygen(rng))
             .collect();
 
@@ -879,64 +961,8 @@ mod tests {
 
         //run universe setup
         let (vk, ak) = HinTS::preprocess(n, &params, &signers_info);
-    
-        // -------------- sample proof specific values ---------------
-        //samples n-1 random bits
-        let bitmap = sample_bitmap(num_signers, 0.75);
 
-        // for all the active parties, sample partial signatures
-        // filter our bitmap indices that are 1
-        let mut partial_signatures = HashMap::new();
-        bitmap.iter().enumerate().for_each(|(i, &bit)| {
-            if bit == F::from(1) {
-                let sig = HinTS::sign(msg, &sks[i]);
-                let valid = HinTS::partial_verify(&params, msg, &epks[i].pk_i, &sig);
-                if valid {
-                    partial_signatures.insert(i, sig);
-                }
-            }
-        });
-    
-        let start = Instant::now();
-        let π = HinTS::aggregate(&params, &ak, &vk, &partial_signatures);
-        let duration = start.elapsed();
-        println!("Time elapsed in prover is: {:?}", duration);
-        
-    
-        let start = Instant::now();
-        let threshold = (F::from(1), F::from(3)); // 1/3
-        assert!(HinTS::verify(&params, msg, &vk, &π, threshold));
-        let duration = start.elapsed();
-        println!("Time elapsed in verifier is: {:?}", duration);
-
-        // test (de)-serialization
-        let serialized_vk = serialize(&vk);
-        let deserialized_vk = deserialize::<VerificationKey>(&serialized_vk);
-
-        let serialized_ak = serialize(&ak);
-        let deserialized_ak = deserialize::<AggregationKey>(&serialized_ak);
-
-        let serialized_π = super::serialize(&π);
-        let deserialized_π = deserialize::<ThresholdSignature>(&serialized_π);
-
-        assert_eq!(vk, deserialized_vk);
-        assert_eq!(ak, deserialized_ak);
-        assert_eq!(π, deserialized_π);
-
-        assert!(HinTS::verify(&params, msg, &deserialized_vk, &deserialized_π, threshold));
-
-        // print out sizes
-        println!("Size of vk: {}", serialized_vk.len());
-        println!("Size of ak: {}", serialized_ak.len());
-        println!("Size of π: {}", serialized_π.len());
-
-        // attack the proof
-        let mut π_attack = π.clone();
-        π_attack.agg_weight = F::from(1000000000); // some arbitrary weight
-        assert!(!HinTS::verify(&params, msg, &vk, &π_attack, threshold));
-
-        // try a really high threshold of 99%
-        assert!(!HinTS::verify(&params, msg, &vk, &π_attack, (F::from(99), F::from(100))));
+        (params, ak, vk, sks, epks)
     }
 
     fn sample_weights(n: usize) -> Vec<F> {
