@@ -24,28 +24,12 @@ impl PowersOfTauProtocol {
     /// outputs the initial CRS without any entropy, to kickstart the ceremony;
     /// this should be the first CRS without any participant's contribution; 
     /// don't use this CRS!!! Wait till you have enough participants.
+    /// Observe that this is equivalent to CRS with \tau = 1.
     pub fn init(degree: usize) -> CRS {
-        let g = G1AffinePoint::generator();
-        let h = G2AffinePoint::generator();
-
-        // initial CRS is built with tau = 1
-        let tau = F::from(1u64);
-        // powers of tau go from tau^0 to tau^degree, inclusive
-        let powers_of_tau = (0..=degree)
-            .map(|i| tau.pow(&[i as u64]))
-            .collect::<Vec<F>>();
-
-        let powers_of_g = powers_of_tau
-            .iter()
-            .map(|tau_i| g.mul(tau_i).into_affine())
-            .collect::<Vec<G1AffinePoint>>();
-
-        let powers_of_h = powers_of_tau
-            .iter()
-            .map(|tau_i| h.mul(tau_i).into_affine())
-            .collect::<Vec<G2AffinePoint>>();
-
-        kzg::UniversalParams { powers_of_g, powers_of_h }
+        kzg::UniversalParams {
+            powers_of_g: vec![G1AffinePoint::generator(); degree + 1],
+            powers_of_h: vec![G2AffinePoint::generator(); degree + 1]
+        }
     }
 
     pub fn contribute(crs: &CRS, r: F) -> (CRS, ContributionProof) {
@@ -69,7 +53,7 @@ impl PowersOfTauProtocol {
             .map(|(h_i, r_i)| h_i.mul(r_i).into_affine())
             .collect::<Vec<G2AffinePoint>>();
 
-        let next_crs = kzg::UniversalParams { powers_of_g, powers_of_h };
+        let next_crs: CRS = kzg::UniversalParams { powers_of_g, powers_of_h };
 
         let proof = schnorr_nizk(
             &crs.powers_of_g[1],
@@ -82,9 +66,32 @@ impl PowersOfTauProtocol {
     }
 
     pub fn verify_contribution(prev_crs: &CRS, next_crs: &CRS, proof: &ContributionProof) -> bool {
+
+        let lhs = <Curve as Pairing>::pairing(
+            next_crs.powers_of_g[0],
+            next_crs.powers_of_h[1]
+        );
+        let rhs = <Curve as Pairing>::pairing(
+            next_crs.powers_of_g[1],
+            next_crs.powers_of_h[0]
+        );
+        assert_eq!(lhs, rhs);
+        let lhs = <Curve as Pairing>::pairing(
+            next_crs.powers_of_g[31],
+            next_crs.powers_of_h[32]
+        );
+        let rhs = <Curve as Pairing>::pairing(
+            next_crs.powers_of_g[32],
+            next_crs.powers_of_h[31]
+        );
+        assert_eq!(lhs, rhs);
+
         check_or_return_false!(check1(&prev_crs.powers_of_g[1], &next_crs.powers_of_g[1], proof));
+        println!("check1 passed");
         check_or_return_false!(check2(&next_crs));
+        println!("check2 passed");
         check_or_return_false!(check3(&next_crs));
+        println!("check3 passed");
 
         true
     }
@@ -101,6 +108,8 @@ fn schnorr_nizk<R: Rng>(
     let prev_p1_mul_z = prev_p1.mul(&z).into_affine();
     let h = random_oracle(prev_p1, next_p1, &prev_p1_mul_z);
     let z_plus_hr = z + h * r;
+    println!("z_plus_hr: {:?}", z_plus_hr);
+    println!("r: {:?}", r);
     ContributionProof { p1_mul_z: prev_p1_mul_z, z_plus_hr }
 }
 
@@ -109,9 +118,9 @@ fn check1(
     next_p1: &G1AffinePoint,
     proof: &ContributionProof
 ) -> bool {
-    let lhs = prev_p1.mul(&proof.z_plus_hr).into_affine();
     let h = random_oracle(prev_p1, next_p1, &proof.p1_mul_z);
-    let rhs = proof.p1_mul_z.add(prev_p1.mul(h)).into_affine();
+    let lhs = prev_p1.mul(&proof.z_plus_hr).into_affine();
+    let rhs = proof.p1_mul_z.add(next_p1.mul(h)).into_affine();
     lhs == rhs
 }
 
@@ -136,8 +145,28 @@ fn random_oracle(
     ]))
 }
 
-// eqn 4.3 in https://eprint.iacr.org/2022/1592.pdf
+// checks well-formedness using pairing equations
 fn check2(crs: &CRS) -> bool {
+    let n = crs.powers_of_g.len() - 1;
+
+    for i in 0..n {
+        let lhs = <Curve as Pairing>::pairing(
+            crs.powers_of_g[i],
+            crs.powers_of_h[i+1]
+        );
+        let rhs = <Curve as Pairing>::pairing(
+            crs.powers_of_g[i+1],
+            crs.powers_of_h[i]
+        );
+
+        if lhs != rhs { return false; }
+    }
+
+    return true;
+}
+
+// eqn 4.3 in https://eprint.iacr.org/2022/1592.pdf
+fn _check2_optimized(crs: &CRS) -> bool {
     let n = crs.powers_of_g.len() - 1;
 
     let mut crs_bytes = Vec::new();
@@ -187,7 +216,7 @@ fn check2(crs: &CRS) -> bool {
 fn check3(crs: &CRS) -> bool {
     // note that we use location 0 to store the generator (denoted B1)
     // so we need to perform this check for element at index 1
-    return crs.powers_of_g[1] == G1AffinePoint::zero();
+    return crs.powers_of_g[1] != G1AffinePoint::zero();
 }
 
 // takes a list of byte slices and computes the sha256 hash
@@ -200,4 +229,20 @@ pub fn compute_sha256(inputs: &[impl AsRef<[u8]>]) -> [u8; 32] {
         hasher.update(input.as_ref());
     }
     hasher.finalize().into()
+}
+
+#[allow(unused_imports)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_powers_of_tau_protocol() {
+        let degree = 32;
+        let crs = PowersOfTauProtocol::init(degree);
+
+        let mut rng = rand::thread_rng();
+        let (next_crs, proof) = PowersOfTauProtocol::contribute(&crs, F::rand(&mut rng));
+
+        assert!(PowersOfTauProtocol::verify_contribution(&crs, &next_crs, &proof));
+    }
 }
