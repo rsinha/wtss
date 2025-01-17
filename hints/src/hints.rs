@@ -36,13 +36,13 @@ use crate::kzg;
 use crate::{assert_power_of_2, check_or_return_false};
 
 /// Pairing friendly curve powering the hinTS scheme
-type Curve = Bls12_381;
+pub type Curve = Bls12_381;
 /// KZG polynomial commitment scheme
 type KZG = kzg::KZG10::<Curve, DensePolynomial<<Curve as Pairing>::ScalarField>>;
 /// Common reference string for the hinTS scheme
-type CRS = kzg::UniversalParams<Curve>;
+pub type CRS = kzg::UniversalParams<Curve>;
 /// Scalar Field
-type F = ark_bls12_381::Fr;
+pub type F = ark_bls12_381::Fr;
 /// Represents a point in G1 (affine coordinates)
 pub type G1AffinePoint = Affine<G1Config>;
 /// Represents a point in G2 (affine coordinates)
@@ -478,13 +478,13 @@ impl HinTS {
         let t_of_x = l_n_minus_1_of_x.mul(&b_of_x.sub(&one_poly));
         let b_check_q_of_x = t_of_x.div(&z_of_x);
     
-        let qz_com = ipa(&ak.qz_terms, &bitmap);
-        let qx_com = ipa(&ak.qx_terms, &bitmap);
-        let qx_mul_tau_com = ipa(&ak.qx_mul_tau_terms, &bitmap);
+        let qz_com = inner_product(&ak.qz_terms, &bitmap);
+        let qx_com = inner_product(&ak.qx_terms, &bitmap);
+        let qx_mul_tau_com = inner_product(&ak.qx_mul_tau_terms, &bitmap);
 
         // aggregate pubkey is the sum of all active public keys, multiplied by n_inv
         // this is computed using the fn for inner product argument with bitmap
-        let agg_pk = ipa::<G1AffinePoint>(&ak.pks, &bitmap).mul(n_inv).into_affine();
+        let agg_pk = inner_product(&ak.pks, &bitmap).mul(n_inv).into_affine();
         
         // aggregate sig is the sum of all partial signatures, multiplied by n_inv
         let partial_sigs = partial_signatures
@@ -798,8 +798,8 @@ fn compute_psw_poly(
     eval_form.interpolate()    
 }
 
-/// computes the inner product argument between a vector of group elements and bitvector
-fn ipa<T: AffineRepr>(elements: &Vec<T>, bitmap: &Vec<F>) -> T {
+/// computes the inner product between a vector of group elements and bitvector
+fn inner_product<T: AffineRepr>(elements: &Vec<T>, bitmap: &Vec<F>) -> T {
     elements
     .iter()
     .zip(bitmap.iter())
