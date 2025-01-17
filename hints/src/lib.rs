@@ -14,6 +14,7 @@
 // limitations under the License.
 
 pub mod hints;
+pub mod setup;
 
 mod utils;
 mod kzg;
