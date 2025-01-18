@@ -248,18 +248,24 @@ pub fn compute_sha256(inputs: &[impl AsRef<[u8]>]) -> [u8; 32] {
 
 #[allow(unused_imports)]
 mod tests {
-    use super::*;
+    use super::{PowersOfTauProtocol as Prot, *};
 
     #[test]
     fn test_powers_of_tau_protocol() {
         let degree = 32;
-        let crs = PowersOfTauProtocol::init(degree);
+        let crs = Prot::init(degree);
 
         let mut rng = rand::thread_rng();
-        let (next_crs, proof) = PowersOfTauProtocol::contribute(&crs, F::rand(&mut rng));
+        let (next_crs, proof) = Prot::contribute(&crs, F::rand(&mut rng));
+        assert!(Prot::verify_contribution(&crs, &next_crs, &proof));
 
-        assert!(PowersOfTauProtocol::verify_contribution(
-            &crs, &next_crs, &proof
-        ));
+        let (next_next_crs, proof) = Prot::contribute(&next_crs, F::rand(&mut rng));
+        assert!(Prot::verify_contribution(&next_crs, &next_next_crs, &proof));
+
+        // serialization test
+        assert_eq!(
+            next_next_crs,
+            crate::hints::deserialize::<CRS>(&crate::hints::serialize(&next_next_crs))
+        );
     }
 }
