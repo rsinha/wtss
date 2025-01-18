@@ -13,16 +13,12 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use ark_std::ops::*;
+use crate::assert_power_of_2;
 use ark_ff::PrimeField;
 use ark_poly::{
-    Polynomial,
-    univariate::DensePolynomial, 
-    EvaluationDomain, 
-    Radix2EvaluationDomain,
-    Evaluations
+    univariate::DensePolynomial, EvaluationDomain, Evaluations, Polynomial, Radix2EvaluationDomain,
 };
-use crate::assert_power_of_2;
+use ark_std::ops::*;
 
 // returns t(X) = X^n - 1
 // relies on n being a power of 2
@@ -30,7 +26,7 @@ pub fn compute_vanishing_poly<F: PrimeField + From<u64>>(n: usize) -> DensePolyn
     assert_power_of_2!(n);
 
     let mut coeffs = vec![];
-    for i in 0..n+1 {
+    for i in 0..n + 1 {
         if i == 0 {
             let minus_one: F = F::from(0u64) - F::from(1u64);
             coeffs.push(minus_one); // 0'th coefficient is -1
@@ -46,7 +42,9 @@ pub fn compute_vanishing_poly<F: PrimeField + From<u64>>(n: usize) -> DensePolyn
 // interpolate polynomial which evaluates to points in v
 // the domain is the powers of n-th root of unity, where n is size of v
 // relies on n being a power of 2
-pub fn interpolate_poly_over_mult_subgroup<F: PrimeField + From<u64>>(evals: &Vec<F>) -> DensePolynomial<F> {
+pub fn interpolate_poly_over_mult_subgroup<F: PrimeField + From<u64>>(
+    evals: &Vec<F>,
+) -> DensePolynomial<F> {
     let n = evals.len();
     assert_power_of_2!(n);
 
@@ -91,7 +89,8 @@ pub fn compute_constant_poly<F: PrimeField>(c: &F) -> DensePolynomial<F> {
 // computes f(ωx)
 pub fn poly_domain_mult_ω<F: PrimeField>(f: &DensePolynomial<F>, ω: &F) -> DensePolynomial<F> {
     let mut new_poly = f.clone();
-    for i in 1..(f.degree() + 1) { //we don't touch the zeroth coefficient
+    for i in 1..(f.degree() + 1) {
+        //we don't touch the zeroth coefficient
         let ω_pow_i: F = ω.pow([i as u64]);
         new_poly.coeffs[i] = new_poly.coeffs[i] * ω_pow_i;
     }
