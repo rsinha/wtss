@@ -151,7 +151,7 @@ fn random_oracle(
 }
 
 // checks well-formedness using pairing equations
-fn check2(crs: &CRS) -> bool {
+fn _check2_unoptimized(crs: &CRS) -> bool {
     let n = crs.powers_of_g.len() - 1;
 
     for i in 0..n {
@@ -167,7 +167,7 @@ fn check2(crs: &CRS) -> bool {
 }
 
 // eqn 4.3 in https://eprint.iacr.org/2022/1592.pdf
-fn _check2_optimized(crs: &CRS) -> bool {
+fn check2(crs: &CRS) -> bool {
     let n = crs.powers_of_g.len() - 1;
 
     let mut crs_bytes = Vec::new();
@@ -215,7 +215,7 @@ fn _check2_optimized(crs: &CRS) -> bool {
     let rhs_rhs = <<Curve as Pairing>::G2 as VariableBaseMSM>::msm(
         &crs.powers_of_h[1..=n],
         &(0..=n - 1)
-            .map(|i| rho1.pow(&[i as u64]))
+            .map(|i| rho2.pow(&[i as u64]))
             .collect::<Vec<F>>(),
     )
     .unwrap()
