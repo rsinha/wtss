@@ -942,7 +942,9 @@ mod tests {
 
         let init_crs = PowersOfTauProtocol::init(n);
         let (crs, proof) = PowersOfTauProtocol::contribute(&init_crs, F::from(42u64));
-        assert!(PowersOfTauProtocol::verify_contribution(&init_crs, &crs, &proof));
+        assert!(PowersOfTauProtocol::verify_contribution(
+            &init_crs, &crs, &proof
+        ));
 
         // -------------- sample universe specific values ---------------
         //sample random keys
