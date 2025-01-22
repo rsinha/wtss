@@ -12,7 +12,7 @@ use serde_hex::{SerHex, StrictPfx};
 use sp1_sdk::{include_elf, HashableKey, SP1ProofWithPublicValues, SP1VerifyingKey};
 
 use ab_rotation_lib::PublicValuesStruct;
-use ab_rotation_script::{construct_genesis_proof, construct_rotation_proof};
+use ab_rotation_script::{construct_genesis_proof, construct_rotation_proof, setup, verify_proof};
 
 use std::path::PathBuf;
 
@@ -41,6 +41,9 @@ fn main() {
     // Setup the logger.
     sp1_sdk::utils::setup_logger();
 
+    // Setup the program.
+    let (pk, vk) = setup(AB_ROTATION_ELF);
+
     // AB 0 (genesis AB)
     let genesis_validators = ab_rotation_lib::signers::gen_validators::<5>();
     let ab_genesis = genesis_validators.verifying_keys_with_weights_for_in([1; 5]);
@@ -66,7 +69,8 @@ fn main() {
                 .into(),
         );
     let genesis_proof = construct_genesis_proof(
-        AB_ROTATION_ELF,
+        &pk,
+        &vk,
         &ab_genesis,
         &ab_1,
         &genesis_signatures,
@@ -77,7 +81,9 @@ fn main() {
     let mut prev_proof = genesis_proof;
     let mut prev_validators = validators_1;
 
-    for _day in 0..2 {
+    for _day in 0..5 {
+        assert!(verify_proof(&vk, &prev_proof));
+
         let next_validators = ab_rotation_lib::signers::gen_validators::<5>();
         let next_ab = next_validators.verifying_keys_with_weights_for_in([1; 5]);
         #[cfg(feature = "with_bls_aggregate")]
@@ -99,7 +105,8 @@ fn main() {
             );
 
         let next_proof = construct_rotation_proof(
-            AB_ROTATION_ELF,
+            &pk,
+            &vk,
             &ab_genesis_hash,
             &prev_ab,
             &next_ab,
@@ -109,10 +116,26 @@ fn main() {
             &signatures,
         );
 
+        // sanity check
+        assert!(verify_proof(&vk, &ser_then_deser(&next_proof)));
+
         prev_proof = next_proof;
         prev_ab = next_ab;
         prev_validators = next_validators;
     }
+}
+
+fn ser_then_deser(proof: &SP1ProofWithPublicValues) -> SP1ProofWithPublicValues {
+    let mut in_memory_proof_buffer: Vec<u8> = Vec::new();
+    bincode::serialize_into(&mut in_memory_proof_buffer, &proof)
+        .expect("failed to serialize proof");
+
+    println!("serialized proof of len {}", in_memory_proof_buffer.len());
+
+    let deserialized_proof: SP1ProofWithPublicValues =
+        bincode::deserialize_from(&in_memory_proof_buffer[..]).expect("Failed to deserialize");
+
+    deserialized_proof
 }
 
 /// Create a fixture for the given proof.

@@ -1,5 +1,7 @@
 use ab_rotation_lib::{address_book::AddressBook, address_book::Signatures, statement::Statement};
-use sp1_sdk::{HashableKey, ProverClient, SP1ProofWithPublicValues, SP1Stdin, SP1VerifyingKey};
+use sp1_sdk::{
+    HashableKey, ProverClient, SP1ProofWithPublicValues, SP1ProvingKey, SP1Stdin, SP1VerifyingKey,
+};
 
 pub fn rotation_message(
     ab_next: &AddressBook,
@@ -20,9 +22,29 @@ pub fn rotation_message(
     message
 }
 
+pub fn setup(zkvm_elf: &[u8]) -> (SP1ProvingKey, SP1VerifyingKey) {
+    // Setup the prover client.
+    let client = ProverClient::new();
+
+    // Setup the program.
+    let (pk, vk) = client.setup(zkvm_elf);
+
+    (pk, vk)
+}
+
+pub fn verify_proof(vk: &SP1VerifyingKey, proof: &SP1ProofWithPublicValues) -> bool {
+    let start_time = std::time::Instant::now();
+    // Setup the prover client.
+    let client = ProverClient::new();
+    let verification = client.verify(proof, vk);
+    println!("Proof verification took {:?}", start_time.elapsed());
+    verification.is_ok()
+}
+
 /// Creates the first proof for the genesis AddressBook.
 pub fn construct_genesis_proof(
-    zkvm_elf: &[u8],          // ELF as byte array
+    pk: &SP1ProvingKey,       // proving key output by sp1 setup
+    vk: &SP1VerifyingKey,     // verifying key output by sp1 setup
     ab_genesis: &AddressBook, // genesis AddressBook
     ab_next: &AddressBook,    // next AddressBook
     signatures: &Signatures,  // signatures attesting the next AddressBook
@@ -30,11 +52,6 @@ pub fn construct_genesis_proof(
 ) -> SP1ProofWithPublicValues {
     // Setup the prover client.
     let client = ProverClient::new();
-
-    // Setup the program.
-    let start_time = std::time::Instant::now();
-    let (pk, vk) = client.setup(zkvm_elf);
-    println!("Setup for (pk,vk) took {:?}", start_time.elapsed());
 
     let ab_genesis_hash = ab_rotation_lib::address_book::serialize_and_digest_sha256(&ab_genesis);
 
@@ -60,7 +77,7 @@ pub fn construct_genesis_proof(
     // Generate the proofs
     let start_time = std::time::Instant::now();
     let proof: SP1ProofWithPublicValues = client
-        .prove(&pk, stdin.clone())
+        .prove(pk, stdin.clone())
         .compressed()
         .run()
         .expect("failed to generate proof");
@@ -76,23 +93,20 @@ pub fn construct_genesis_proof(
     proof
 }
 
+#[allow(clippy::too_many_arguments)]
 /// Creates the first proof for the genesis AddressBook.
 pub fn construct_rotation_proof(
-    zkvm_elf: &[u8],                                            // ELF as byte array
-    ab_genesis_hash: &[u8; 32],                                 // genesis AddressBook hash
-    ab_curr: &AddressBook,                                      // current AddressBook
-    ab_next: &AddressBook,                                      // next AddressBook
-    prev_proof: SP1ProofWithPublicValues,                       // the previous proof
+    pk: &SP1ProvingKey,                   // proving key output by sp1 setup
+    vk: &SP1VerifyingKey,                 // verifying key output by sp1 setup
+    ab_genesis_hash: &[u8; 32],           // genesis AddressBook hash
+    ab_curr: &AddressBook,                // current AddressBook
+    ab_next: &AddressBook,                // next AddressBook
+    prev_proof: SP1ProofWithPublicValues, // the previous proof
     #[cfg(feature = "with_bls_aggregate")] hints_vk: &[u8; 48], // the BLS aggregate key for the next AddressBook
     signatures: &Signatures, // signatures attesting the next AddressBook
 ) -> SP1ProofWithPublicValues {
     // Setup the prover client.
     let client = ProverClient::new();
-
-    // Setup the program.
-    let start_time = std::time::Instant::now();
-    let (pk, vk) = client.setup(zkvm_elf);
-    println!("Setup for (pk,vk) took {:?}", start_time.elapsed());
 
     let (ab_curr_hash, ab_next_hash, stmt) = generate_statement(
         *ab_genesis_hash,
@@ -121,7 +135,7 @@ pub fn construct_rotation_proof(
     let start_time = std::time::Instant::now();
     // Generate the proofs
     let proof: SP1ProofWithPublicValues = client
-        .prove(&pk, stdin.clone())
+        .prove(pk, stdin.clone())
         .compressed()
         .run()
         .expect("failed to generate proof");
