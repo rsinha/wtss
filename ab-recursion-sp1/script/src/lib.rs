@@ -1,5 +1,5 @@
 use ab_rotation_lib::{address_book::AddressBook, address_book::Signatures, statement::Statement};
-use sp1_sdk::SP1ProofWithPublicValues;
+use sp1_sdk::{HashableKey, ProverClient, SP1ProofWithPublicValues, SP1Stdin, SP1VerifyingKey};
 
 pub fn rotation_message(
     ab_next: &AddressBook,
@@ -20,7 +20,125 @@ pub fn rotation_message(
     message
 }
 
-pub fn generate_statement(
+/// Creates the first proof for the genesis AddressBook.
+pub fn construct_genesis_proof(
+    zkvm_elf: &[u8],          // ELF as byte array
+    ab_genesis: &AddressBook, // genesis AddressBook
+    ab_next: &AddressBook,    // next AddressBook
+    signatures: &Signatures,  // signatures attesting the next AddressBook
+    hints_vk: &[u8; 48],      // the BLS aggregate key for the next AddressBook
+) -> SP1ProofWithPublicValues {
+    // Setup the prover client.
+    let client = ProverClient::new();
+
+    // Setup the program.
+    let start_time = std::time::Instant::now();
+    let (pk, vk) = client.setup(zkvm_elf);
+    println!("Setup for (pk,vk) took {:?}", start_time.elapsed());
+
+    let ab_genesis_hash = ab_rotation_lib::address_book::serialize_and_digest_sha256(&ab_genesis);
+
+    let start_time = std::time::Instant::now();
+    let (_, _, stmt) = generate_statement(
+        ab_genesis_hash,
+        None,
+        vk.hash_u32(),
+        ab_genesis,
+        ab_next,
+        signatures,
+        #[cfg(feature = "with_bls_aggregate")]
+        *hints_vk,
+    );
+    println!("Statement generation took {:?}", start_time.elapsed());
+
+    // Setup the inputs.
+    let mut stdin = SP1Stdin::new();
+    stdin.write(&stmt);
+
+    println!("ab_genesis_hash: 0x{}", hex::encode(ab_genesis_hash));
+
+    // Generate the proofs
+    let start_time = std::time::Instant::now();
+    let proof: SP1ProofWithPublicValues = client
+        .prove(&pk, stdin.clone())
+        .compressed()
+        .run()
+        .expect("failed to generate proof");
+
+    // let proof_plonk = client
+    //     .prove(&pk, stdin)
+    //     .plonk()
+    //     .run()
+    //     .expect("failed to generate plonk proof");
+
+    //create_proof_fixture(&proof0to1plonk, &vk, "0to1");
+    println!("Proof generation took {:?}", start_time.elapsed());
+    proof
+}
+
+/// Creates the first proof for the genesis AddressBook.
+pub fn construct_rotation_proof(
+    zkvm_elf: &[u8],                                            // ELF as byte array
+    ab_genesis_hash: &[u8; 32],                                 // genesis AddressBook hash
+    ab_curr: &AddressBook,                                      // current AddressBook
+    ab_next: &AddressBook,                                      // next AddressBook
+    prev_proof: SP1ProofWithPublicValues,                       // the previous proof
+    #[cfg(feature = "with_bls_aggregate")] hints_vk: &[u8; 48], // the BLS aggregate key for the next AddressBook
+    signatures: &Signatures, // signatures attesting the next AddressBook
+) -> SP1ProofWithPublicValues {
+    // Setup the prover client.
+    let client = ProverClient::new();
+
+    // Setup the program.
+    let start_time = std::time::Instant::now();
+    let (pk, vk) = client.setup(zkvm_elf);
+    println!("Setup for (pk,vk) took {:?}", start_time.elapsed());
+
+    let (ab_curr_hash, ab_next_hash, stmt) = generate_statement(
+        *ab_genesis_hash,
+        Some(&prev_proof),
+        vk.hash_u32(),
+        ab_curr,
+        ab_next,
+        signatures,
+        #[cfg(feature = "with_bls_aggregate")]
+        *hints_vk,
+    );
+
+    // Setup the inputs.
+    let mut stdin = SP1Stdin::new();
+    stdin.write(&stmt);
+    stdin.write_proof(
+        *prev_proof.proof.try_as_compressed().unwrap(),
+        vk.vk.clone(),
+    );
+
+    println!("Hashes to be proved:");
+    println!("ab_genesis_hash: 0x{}", hex::encode(ab_genesis_hash));
+    println!("ab_curr_hash:    0x{}", hex::encode(ab_curr_hash));
+    println!("ab_next_hash:    0x{}", hex::encode(ab_next_hash));
+
+    let start_time = std::time::Instant::now();
+    // Generate the proofs
+    let proof: SP1ProofWithPublicValues = client
+        .prove(&pk, stdin.clone())
+        .compressed()
+        .run()
+        .expect("failed to generate proof");
+
+    // let proof_plonk = client
+    //     .prove(&pk, stdin)
+    //     .plonk()
+    //     .run()
+    //     .expect("failed to generate plonk proof");
+
+    //create_proof_fixture(&proof0to1plonk, &vk, "0to1");
+    println!("Proof generation took {:?}", start_time.elapsed());
+
+    proof
+}
+
+fn generate_statement(
     ab_genesis_hash: [u8; 32],
     prev_proof: Option<&SP1ProofWithPublicValues>,
     vk_digest: [u32; 8],
