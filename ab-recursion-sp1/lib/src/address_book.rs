@@ -68,8 +68,9 @@ pub fn calculate_signers_weight(ab: &AddressBook, signatures: &Signatures, messa
         let added_weight = ms
             .as_ref()
             .map(|signature_bytes| {
-                let verifying_key = <ed25519::VerifyingKey>::from_bytes(&abe.ed25519_public_key)
-                    .expect("A valid ED25519 public key");
+                let verifying_key =
+                    <ed25519_dalek::VerifyingKey>::from_bytes(&abe.ed25519_public_key)
+                        .expect("A valid ED25519 public key");
                 let signature = <ed25519_dalek::Signature>::from_bytes(signature_bytes);
                 verifying_key
                     .verify_strict(message, &signature)
