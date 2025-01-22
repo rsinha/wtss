@@ -6,8 +6,10 @@
 sp1_zkvm::entrypoint!(main);
 
 use ab_rotation_lib::{
-    address_book::{digest_sha256, serialize_and_digest_sha256},
-    calculate_signers_weight, calculate_total_weight,
+    address_book::{
+        calculate_signers_weight, calculate_total_weight, digest_sha256,
+        serialize_and_digest_sha256,
+    },
     statement::Statement,
     PublicValuesStruct,
 };
@@ -62,7 +64,7 @@ pub fn main() {
     }
 
     println!("cycle-tracker-start: calculating total weight");
-    let total_weight = calculate_total_weight(&statement);
+    let total_weight = calculate_total_weight(&statement.ab_curr);
     println!("cycle-tracker-end: calculating total weight");
 
     let message = [
@@ -76,13 +78,18 @@ pub fn main() {
     .collect::<Vec<_>>();
 
     println!("cycle-tracker-start: calculating signers weight");
-    let signers_weight = calculate_signers_weight(&statement, &message);
+    let signers_weight =
+        calculate_signers_weight(&statement.ab_curr, &statement.signatures, &message);
     println!("cycle-tracker-end: calculating signers weight");
 
     // Assert that enough (1/3-rd) of the current validators have signed the next AB
     // NOTE: not using floats to avoid rounding issues
     let enough_signatures = 3 * signers_weight >= total_weight;
-    assert!(enough_signatures, "Have enough signatures, need a third, got {}", (signers_weight as f64 / total_weight as f64));
+    assert!(
+        enough_signatures,
+        "Have enough signatures, need a third, got {}",
+        (signers_weight as f64 / total_weight as f64)
+    );
 
     #[allow(clippy::diverging_sub_expression, unused)]
     let public_values = PublicValuesStruct {

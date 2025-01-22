@@ -2,7 +2,7 @@ use serde::{Deserialize, Serialize};
 #[cfg(feature = "with_bls_aggregate")]
 use serde_big_array::Array;
 
-use crate::{address_book::AddressBook, ed25519::Signatures};
+use crate::{address_book::AddressBook, address_book::Signatures};
 
 #[derive(Debug, Serialize, Deserialize)]
 pub struct Statement {

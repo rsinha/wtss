@@ -25,8 +25,6 @@ impl<const N: usize> SigningKeys<N> {
         let verifying_keys = self.verifying_keys();
         core::array::from_fn(|i| AddressBookEntry {
             ed25519_public_key: Array(verifying_keys[i]),
-            #[cfg(feature = "with_bls_aggregate")]
-            bls_public_key: Default::default(),
             weight: weights[i],
         })
     }
