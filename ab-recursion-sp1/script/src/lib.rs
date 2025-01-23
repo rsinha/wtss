@@ -1,7 +1,21 @@
-use ab_rotation_lib::{address_book::AddressBook, address_book::Signatures, statement::Statement};
+use ab_rotation_lib::{
+    address_book::{AddressBook, Signatures},
+    ed25519::{Signature, SigningKey, VerifyingKey},
+    statement::Statement,
+};
 use sp1_sdk::{
     HashableKey, ProverClient, SP1ProofWithPublicValues, SP1ProvingKey, SP1Stdin, SP1VerifyingKey,
 };
+
+pub fn keygen() -> (SigningKey, VerifyingKey) {
+    let sk = SigningKey::generate();
+    let vk = VerifyingKey(sk.0.verifying_key());
+    (sk, vk)
+}
+
+pub fn sign(sk: &SigningKey, message: &[u8]) -> Signature {
+    sk.sign(message)
+}
 
 pub fn rotation_message(
     ab_next: &AddressBook,
@@ -22,7 +36,7 @@ pub fn rotation_message(
     message
 }
 
-pub fn setup(zkvm_elf: &[u8]) -> (SP1ProvingKey, SP1VerifyingKey) {
+pub fn proof_setup(zkvm_elf: &[u8]) -> (SP1ProvingKey, SP1VerifyingKey) {
     // Setup the prover client.
     let client = ProverClient::new();
 
@@ -30,15 +44,6 @@ pub fn setup(zkvm_elf: &[u8]) -> (SP1ProvingKey, SP1VerifyingKey) {
     let (pk, vk) = client.setup(zkvm_elf);
 
     (pk, vk)
-}
-
-pub fn verify_proof(vk: &SP1VerifyingKey, proof: &SP1ProofWithPublicValues) -> bool {
-    let start_time = std::time::Instant::now();
-    // Setup the prover client.
-    let client = ProverClient::new();
-    let verification = client.verify(proof, vk);
-    println!("Proof verification took {:?}", start_time.elapsed());
-    verification.is_ok()
 }
 
 /// Creates the first proof for the genesis AddressBook.
@@ -150,6 +155,15 @@ pub fn construct_rotation_proof(
     println!("Proof generation took {:?}", start_time.elapsed());
 
     proof
+}
+
+pub fn verify_proof(vk: &SP1VerifyingKey, proof: &SP1ProofWithPublicValues) -> bool {
+    let start_time = std::time::Instant::now();
+    // Setup the prover client.
+    let client = ProverClient::new();
+    let verification = client.verify(proof, vk);
+    println!("Proof verification took {:?}", start_time.elapsed());
+    verification.is_ok()
 }
 
 fn generate_statement(

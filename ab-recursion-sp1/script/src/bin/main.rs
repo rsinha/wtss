@@ -9,12 +9,17 @@
 use alloy_sol_types::SolType;
 use serde::{Deserialize, Serialize};
 use serde_hex::{SerHex, StrictPfx};
+use smallvec::ToSmallVec;
 use sp1_sdk::{include_elf, HashableKey, SP1ProofWithPublicValues, SP1VerifyingKey};
 
-use ab_rotation_lib::PublicValuesStruct;
-use ab_rotation_script::{construct_genesis_proof, construct_rotation_proof, setup, verify_proof};
-
-use std::path::PathBuf;
+use ab_rotation_lib::{
+    address_book::{AddressBook, Signatures},
+    ed25519::{self, Signature, SigningKey, VerifyingKey},
+    PublicValuesStruct,
+};
+use ab_rotation_script::{
+    construct_genesis_proof, construct_rotation_proof, keygen, proof_setup, verify_proof,
+};
 
 /// The ELF (executable and linkable format) file for the Succinct RISC-V zkVM.
 pub const AB_ROTATION_ELF: &[u8] = include_elf!("ab-rotation-program");
@@ -37,72 +42,91 @@ struct SP1ABRotationProofFixture {
     proof: String,
 }
 
+fn generate_signers<const N: usize>() -> ([SigningKey; N], [VerifyingKey; N]) {
+    let keys: [(SigningKey, VerifyingKey); N] = std::array::from_fn(|_| keygen());
+    let signing_keys: [SigningKey; N] = keys.clone().map(|sk| sk.0);
+    let verifying_keys: [VerifyingKey; N] = keys.map(|sk| sk.1);
+
+    (signing_keys, verifying_keys)
+}
+
+fn subset_sign<const N: usize>(
+    signing_keys: &[ed25519::SigningKey; N],
+    signers: &[bool; N],
+    message: &[u8],
+) -> [Option<Signature>; N] {
+    core::array::from_fn(|i| signers[i].then_some(signing_keys[i].sign(message)))
+}
+
 fn main() {
     // Setup the logger.
     sp1_sdk::utils::setup_logger();
 
     // Setup the program.
-    let (pk, vk) = setup(AB_ROTATION_ELF);
+    let (pk, vk) = proof_setup(AB_ROTATION_ELF);
 
     // AB 0 (genesis AB)
-    let genesis_validators = ab_rotation_lib::signers::gen_validators::<5>();
-    let ab_genesis = genesis_validators.verifying_keys_with_weights_for_in([1; 5]);
-    let ab_genesis_hash = ab_rotation_lib::address_book::serialize_and_digest_sha256(&ab_genesis);
+    // let genesis_validators = ab_rotation_lib::signers::gen_validators::<5>();
+    // let ab_genesis = genesis_validators.verifying_keys_with_weights_for_in([1; 5]);
+    let (genesis_signing_keys, genesis_verifying_keys) = generate_signers::<5>();
+    let ab_genesis = AddressBook::new::<5>(
+        core::array::from_fn(|i| genesis_verifying_keys[i].to_bytes()),
+        [1; 5],
+    );
 
     // AB 1
-    let validators_1 = ab_rotation_lib::signers::gen_validators::<5>();
-    let ab_1 = validators_1.verifying_keys_with_weights_for_in([1; 5]);
+    // let validators_1 = ab_rotation_lib::signers::gen_validators::<5>();
+    // let ab_1 = validators_1.verifying_keys_with_weights_for_in([1; 5]);
+    let (signing_keys_1, verifying_keys_1) = generate_signers::<5>();
+    let ab_1 = AddressBook::new::<5>(
+        core::array::from_fn(|i| verifying_keys_1[i].to_bytes()),
+        [1; 5],
+    );
 
-    // proof for AB 0 (genesis AB)
-    let genesis_signatures: ab_rotation_lib::address_book::Signatures =
-        ab_rotation_lib::address_book::Signatures(
-            genesis_validators
-                .all_sign(
-                    5,
-                    &ab_rotation_script::rotation_message(
-                        &ab_1,
-                        #[cfg(feature = "with_bls_aggregate")]
-                        [0u8; 48],
-                    ),
-                )
-                .to_vec()
-                .into(),
-        );
+    let genesis_signatures = subset_sign(
+        &genesis_signing_keys,
+        &[true; 5],
+        &ab_rotation_script::rotation_message(
+            &ab_1,
+            #[cfg(feature = "with_bls_aggregate")]
+            [0u8; 48],
+        ),
+    );
+
     let genesis_proof = construct_genesis_proof(
         &pk,
         &vk,
         &ab_genesis,
         &ab_1,
-        &genesis_signatures,
+        &Signatures(genesis_signatures.to_smallvec()),
         &[0u8; 48],
     );
 
+    let ab_genesis_hash = ab_rotation_lib::address_book::serialize_and_digest_sha256(&ab_genesis);
+
     let mut prev_ab = ab_1;
     let mut prev_proof = genesis_proof;
-    let mut prev_validators = validators_1;
+    let mut prev_signing_keys = signing_keys_1;
 
-    for _day in 0..5 {
+    // simulate 10 rotations
+    for _day in 0..10 {
         assert!(verify_proof(&vk, &prev_proof));
 
-        let next_validators = ab_rotation_lib::signers::gen_validators::<5>();
-        let next_ab = next_validators.verifying_keys_with_weights_for_in([1; 5]);
-        #[cfg(feature = "with_bls_aggregate")]
-        let bls_aggregate_key = [0; 48];
+        let (next_signing_keys, next_verifying_keys) = generate_signers::<5>();
+        let next_ab = AddressBook::new::<5>(
+            core::array::from_fn(|i| next_verifying_keys[i].to_bytes()),
+            [1; 5],
+        );
 
-        let signatures: ab_rotation_lib::address_book::Signatures =
-            ab_rotation_lib::address_book::Signatures(
-                prev_validators
-                    .all_sign(
-                        5,
-                        &ab_rotation_script::rotation_message(
-                            &next_ab,
-                            #[cfg(feature = "with_bls_aggregate")]
-                            bls_aggregate_key,
-                        ),
-                    )
-                    .to_vec()
-                    .into(),
-            );
+        let signatures = subset_sign(
+            &prev_signing_keys,
+            &[true; 5],
+            &ab_rotation_script::rotation_message(
+                &next_ab,
+                #[cfg(feature = "with_bls_aggregate")]
+                [0u8; 48],
+            ),
+        );
 
         let next_proof = construct_rotation_proof(
             &pk,
@@ -112,8 +136,8 @@ fn main() {
             &next_ab,
             prev_proof,
             #[cfg(feature = "with_bls_aggregate")]
-            &bls_aggregate_key,
-            &signatures,
+            &[0u8; 48],
+            &Signatures(signatures.to_smallvec()),
         );
 
         // sanity check
@@ -121,7 +145,7 @@ fn main() {
 
         prev_proof = next_proof;
         prev_ab = next_ab;
-        prev_validators = next_validators;
+        prev_signing_keys = next_signing_keys;
     }
 }
 
@@ -179,7 +203,8 @@ fn _create_proof_fixture(proof: &SP1ProofWithPublicValues, vk: &SP1VerifyingKey,
     println!("Proof Bytes: {}", fixture.proof);
 
     // Save the fixture to a file.
-    let fixture_path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../contracts/src/fixtures");
+    let fixture_path =
+        std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../contracts/src/fixtures");
     std::fs::create_dir_all(&fixture_path).expect("failed to create fixture path");
     std::fs::write(
         fixture_path.join(

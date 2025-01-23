@@ -9,7 +9,7 @@ pub const SECRET_KEY_LENGTH: usize = ed25519_dalek::SECRET_KEY_LENGTH;
 ///////////
 
 #[repr(transparent)]
-#[derive(Debug, Deref)]
+#[derive(Debug, Deref, Clone)]
 pub struct VerifyingKey(pub ed25519_dalek::VerifyingKey);
 
 impl VerifyingKey {
@@ -32,7 +32,7 @@ impl VerifyingKey {
 ///////////
 
 #[repr(transparent)]
-#[derive(Debug, Deref)]
+#[derive(Debug, Deref, Clone)]
 pub struct SigningKey(pub ed25519_dalek::SigningKey);
 
 impl SigningKey {
