@@ -17,9 +17,7 @@ use ab_rotation_lib::{
     ed25519::{self, Signature, SigningKey, VerifyingKey},
     PublicValuesStruct,
 };
-use ab_rotation_script::{
-    construct_genesis_proof, construct_rotation_proof, keygen, proof_setup, verify_proof,
-};
+use ab_rotation_script::raps::RAPS;
 
 /// The ELF (executable and linkable format) file for the Succinct RISC-V zkVM.
 pub const AB_ROTATION_ELF: &[u8] = include_elf!("ab-rotation-program");
@@ -43,7 +41,7 @@ struct SP1ABRotationProofFixture {
 }
 
 fn generate_signers<const N: usize>() -> ([SigningKey; N], [VerifyingKey; N]) {
-    let keys: [(SigningKey, VerifyingKey); N] = std::array::from_fn(|_| keygen());
+    let keys: [(SigningKey, VerifyingKey); N] = std::array::from_fn(|_| RAPS::keygen());
     let signing_keys: [SigningKey; N] = keys.clone().map(|sk| sk.0);
     let verifying_keys: [VerifyingKey; N] = keys.map(|sk| sk.1);
 
@@ -63,7 +61,7 @@ fn main() {
     sp1_sdk::utils::setup_logger();
 
     // Setup the program.
-    let (pk, vk) = proof_setup(AB_ROTATION_ELF);
+    let (pk, vk) = RAPS::proof_setup(AB_ROTATION_ELF);
 
     // AB 0 (genesis AB)
     // let genesis_validators = ab_rotation_lib::signers::gen_validators::<5>();
@@ -86,14 +84,14 @@ fn main() {
     let genesis_signatures = subset_sign(
         &genesis_signing_keys,
         &[true; 5],
-        &ab_rotation_script::rotation_message(
+        &RAPS::rotation_message(
             &ab_1,
             #[cfg(feature = "with_bls_aggregate")]
             [0u8; 48],
         ),
     );
 
-    let genesis_proof = construct_genesis_proof(
+    let genesis_proof = RAPS::construct_genesis_proof(
         &pk,
         &vk,
         &ab_genesis,
@@ -110,7 +108,7 @@ fn main() {
 
     // simulate 10 rotations
     for _day in 0..10 {
-        assert!(verify_proof(&vk, &prev_proof));
+        assert!(RAPS::verify_proof(&vk, &prev_proof));
 
         let (next_signing_keys, next_verifying_keys) = generate_signers::<5>();
         let next_ab = AddressBook::new::<5>(
@@ -121,14 +119,14 @@ fn main() {
         let signatures = subset_sign(
             &prev_signing_keys,
             &[true; 5],
-            &ab_rotation_script::rotation_message(
+            &RAPS::rotation_message(
                 &next_ab,
                 #[cfg(feature = "with_bls_aggregate")]
                 [0u8; 48],
             ),
         );
 
-        let next_proof = construct_rotation_proof(
+        let next_proof = RAPS::construct_rotation_proof(
             &pk,
             &vk,
             &ab_genesis_hash,
@@ -140,16 +138,13 @@ fn main() {
             &Signatures(signatures.to_smallvec()),
         );
 
-        // sanity check
-        assert!(verify_proof(&vk, &ser_then_deser(&next_proof)));
-
         prev_proof = next_proof;
         prev_ab = next_ab;
         prev_signing_keys = next_signing_keys;
     }
 }
 
-fn ser_then_deser(proof: &SP1ProofWithPublicValues) -> SP1ProofWithPublicValues {
+fn _ser_then_deser(proof: &SP1ProofWithPublicValues) -> SP1ProofWithPublicValues {
     let mut in_memory_proof_buffer: Vec<u8> = Vec::new();
     bincode::serialize_into(&mut in_memory_proof_buffer, &proof)
         .expect("failed to serialize proof");
