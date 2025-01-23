@@ -5,7 +5,6 @@ use alloy_sol_types::sol;
 
 pub mod address_book;
 pub mod ed25519;
-pub mod signers;
 pub mod statement;
 
 #[cfg(not(feature = "with_bls_aggregate"))]
