@@ -87,13 +87,6 @@ pub fn construct_genesis_proof(
         .run()
         .expect("failed to generate proof");
 
-    // let proof_plonk = client
-    //     .prove(&pk, stdin)
-    //     .plonk()
-    //     .run()
-    //     .expect("failed to generate plonk proof");
-
-    //create_proof_fixture(&proof0to1plonk, &vk, "0to1");
     println!("Proof generation took {:?}", start_time.elapsed());
     proof
 }
@@ -145,13 +138,6 @@ pub fn construct_rotation_proof(
         .run()
         .expect("failed to generate proof");
 
-    // let proof_plonk = client
-    //     .prove(&pk, stdin)
-    //     .plonk()
-    //     .run()
-    //     .expect("failed to generate plonk proof");
-
-    //create_proof_fixture(&proof0to1plonk, &vk, "0to1");
     println!("Proof generation took {:?}", start_time.elapsed());
 
     proof
