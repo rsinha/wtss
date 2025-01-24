@@ -70,17 +70,17 @@ fn main() {
     );
 
     // AB 1 is genesis but each weight scaled by factor of 2
-    let signing_keys_1 = genesis_signing_keys.clone();
-    let verifying_keys_1 = genesis_verifying_keys.clone();
-    let ab_1 = AddressBook::new::<5>(
-        core::array::from_fn(|i| verifying_keys_1[i].to_bytes()),
-        [1; 5],
-    );
+    // let signing_keys_1 = genesis_signing_keys.clone();
+    // let verifying_keys_1 = genesis_verifying_keys.clone();
+    // let ab_1 = AddressBook::new::<5>(
+    //     core::array::from_fn(|i| verifying_keys_1[i].to_bytes()),
+    //     [1; 5],
+    // );
 
     let genesis_signatures = subset_sign(
         &genesis_signing_keys,
         &[true; 5],
-        &RAPS::rotation_message(&ab_1, [0u8; 32]),
+        &RAPS::rotation_message(&ab_genesis, [0u8; 32]),
     );
 
     let ab_genesis_hash = ab_rotation_lib::address_book::serialize_and_digest_sha256(&ab_genesis);
@@ -89,16 +89,16 @@ fn main() {
         &vk,
         &ab_genesis_hash,
         &ab_genesis,
-        &ab_1,
+        &ab_genesis,
         None,
         &[0u8; 32],
         &Signatures(genesis_signatures.to_smallvec()),
     );
 
-    let mut prev_ab = ab_1;
+    let mut prev_ab = ab_genesis;
     let mut prev_proof = genesis_proof;
-    let mut prev_signing_keys = signing_keys_1;
-    let mut prev_verifying_keys = verifying_keys_1;
+    let mut prev_signing_keys = genesis_signing_keys;
+    let mut prev_verifying_keys = genesis_verifying_keys;
 
     // simulate 10 rotations
     for day in 0..15 {
