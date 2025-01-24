@@ -74,7 +74,7 @@ fn main() {
     let verifying_keys_1 = genesis_verifying_keys.clone();
     let ab_1 = AddressBook::new::<5>(
         core::array::from_fn(|i| verifying_keys_1[i].to_bytes()),
-        [2; 5],
+        [1; 5],
     );
 
     let genesis_signatures = subset_sign(

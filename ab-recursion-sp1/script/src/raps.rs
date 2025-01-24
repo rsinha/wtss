@@ -72,9 +72,13 @@ impl RAPS {
         // Setup the inputs.
         let mut stdin = SP1Stdin::new();
         stdin.write(&stmt);
-        if let Some(prev_proof) = prev_proof {
+        if ab_curr_hash != *ab_genesis_hash {
             stdin.write_proof(
-                *prev_proof.proof.try_as_compressed().unwrap(),
+                *prev_proof
+                    .expect("expected previous proof")
+                    .proof
+                    .try_as_compressed()
+                    .unwrap(),
                 vk.vk.clone(),
             );
         }
