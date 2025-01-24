@@ -71,13 +71,12 @@ fn main() {
         [1; 5],
     );
 
-    // AB 1
-    // let validators_1 = ab_rotation_lib::signers::gen_validators::<5>();
-    // let ab_1 = validators_1.verifying_keys_with_weights_for_in([1; 5]);
-    let (signing_keys_1, verifying_keys_1) = generate_signers::<5>();
+    // AB 1 is genesis but each weight scaled by factor of 2
+    let signing_keys_1 = genesis_signing_keys.clone();
+    let verifying_keys_1 = genesis_verifying_keys.clone();
     let ab_1 = AddressBook::new::<5>(
         core::array::from_fn(|i| verifying_keys_1[i].to_bytes()),
-        [1; 5],
+        [2; 5],
     );
 
     let genesis_signatures = subset_sign(
@@ -100,14 +99,21 @@ fn main() {
     let mut prev_ab = ab_1;
     let mut prev_proof = genesis_proof;
     let mut prev_signing_keys = signing_keys_1;
+    let mut prev_verifying_keys = verifying_keys_1;
 
     // simulate 10 rotations
-    for _day in 0..10 {
+    for day in 0..15 {
         assert!(RAPS::verify_proof(&vk, &prev_proof));
         println!("Found valid proof: ");
         debug(&prev_proof);
 
-        let (next_signing_keys, next_verifying_keys) = generate_signers::<5>();
+        let (next_signing_keys, next_verifying_keys) = if day % 2 == 0 {
+            // half of the days, we dont rotate
+            generate_signers::<5>()
+        } else {
+            (prev_signing_keys.clone(), prev_verifying_keys.clone())
+        };
+
         let next_ab = AddressBook::new::<5>(
             core::array::from_fn(|i| next_verifying_keys[i].to_bytes()),
             [1; 5],
@@ -133,6 +139,7 @@ fn main() {
         prev_proof = next_proof;
         prev_ab = next_ab;
         prev_signing_keys = next_signing_keys;
+        prev_verifying_keys = next_verifying_keys;
     }
 }
 
