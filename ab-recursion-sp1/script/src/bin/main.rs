@@ -103,7 +103,6 @@ fn main() {
     // simulate 10 rotations
     for day in 0..15 {
         assert!(RAPS::verify_proof(&vk, &prev_proof));
-        println!("Found valid proof: ");
         debug(&prev_proof);
 
         let (next_signing_keys, next_verifying_keys) = if day % 2 == 0 {
@@ -144,7 +143,7 @@ fn main() {
 
 fn debug(proof: &SP1ProofWithPublicValues) {
     let parsed_proof = PublicValuesStruct::abi_decode(&proof.public_values.to_vec(), true).unwrap();
-    println!("-------- BEGIN Roster Attestation Proof --------");
+    println!("------------ BEGIN Roster Attestation Proof ------------");
     println!(
         "ab_genesis_hash: 0x{}",
         &hex::encode(parsed_proof.ab_genesis_hash)[..8]
@@ -161,7 +160,7 @@ fn debug(proof: &SP1ProofWithPublicValues) {
         "tss_vk:          0x{}",
         &hex::encode(parsed_proof.tss_vk_hash)[..8]
     );
-    println!("-------- END Roster Attestation Proof --------");
+    println!("------------ END Roster Attestation Proof ------------");
 }
 
 fn _ser_then_deser(proof: &SP1ProofWithPublicValues) -> SP1ProofWithPublicValues {

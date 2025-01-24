@@ -44,49 +44,6 @@ impl RAPS {
         (pk, vk)
     }
 
-    // /// Creates the first proof for the genesis AddressBook.
-    // pub fn construct_genesis_proof(
-    //     pk: &SP1ProvingKey,       // proving key output by sp1 setup
-    //     vk: &SP1VerifyingKey,     // verifying key output by sp1 setup
-    //     ab_genesis: &AddressBook, // genesis AddressBook
-    //     ab_next: &AddressBook,    // next AddressBook
-    //     signatures: &Signatures,  // signatures attesting the next AddressBook
-    //     tss_vk_hash: &[u8; 32],   // TSS verification key hash for the next AddressBook
-    // ) -> SP1ProofWithPublicValues {
-    //     // Setup the prover client.
-    //     let client = ProverClient::new();
-
-    //     let ab_genesis_hash =
-    //         ab_rotation_lib::address_book::serialize_and_digest_sha256(&ab_genesis);
-
-    //     let (_, _, stmt) = generate_statement(
-    //         ab_genesis_hash,
-    //         None,
-    //         vk.hash_u32(),
-    //         ab_genesis,
-    //         ab_next,
-    //         signatures,
-    //         tss_vk_hash.to_owned(),
-    //     );
-
-    //     // Setup the inputs.
-    //     let mut stdin = SP1Stdin::new();
-    //     stdin.write(&stmt);
-
-    //     println!("ab_genesis_hash: 0x{}", hex::encode(ab_genesis_hash));
-
-    //     // Generate the proofs
-    //     let start_time = std::time::Instant::now();
-    //     let proof: SP1ProofWithPublicValues = client
-    //         .prove(pk, stdin.clone())
-    //         .compressed()
-    //         .run()
-    //         .expect("failed to generate proof");
-
-    //     println!("Proof generation took {:?}", start_time.elapsed());
-    //     proof
-    // }
-
     #[allow(clippy::too_many_arguments)]
     /// Creates the first proof for the genesis AddressBook.
     pub fn construct_rotation_proof(
