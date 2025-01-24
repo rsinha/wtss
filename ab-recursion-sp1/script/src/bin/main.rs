@@ -63,8 +63,6 @@ fn main() {
     let (pk, vk) = RAPS::proof_setup(AB_ROTATION_ELF);
 
     // AB 0 (genesis AB)
-    // let genesis_validators = ab_rotation_lib::signers::gen_validators::<5>();
-    // let ab_genesis = genesis_validators.verifying_keys_with_weights_for_in([1; 5]);
     let (genesis_signing_keys, genesis_verifying_keys) = generate_signers::<5>();
     let ab_genesis = AddressBook::new::<5>(
         core::array::from_fn(|i| genesis_verifying_keys[i].to_bytes()),
