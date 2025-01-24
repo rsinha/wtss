@@ -32,9 +32,8 @@ struct SP1ABRotationProofFixture {
     ab_curr_hash: [u8; 32],
     #[serde(with = "SerHex::<StrictPfx>")]
     ab_next_hash: [u8; 32],
-    #[cfg(feature = "with_bls_aggregate")]
     #[serde(with = "SerHex::<StrictPfx>")]
-    bls_aggregate_key: [u8; 48],
+    tss_vk_next_hash: [u8; 32],
     vkey: String,
     public_values: String,
     proof: String,
@@ -84,11 +83,7 @@ fn main() {
     let genesis_signatures = subset_sign(
         &genesis_signing_keys,
         &[true; 5],
-        &RAPS::rotation_message(
-            &ab_1,
-            #[cfg(feature = "with_bls_aggregate")]
-            [0u8; 48],
-        ),
+        &RAPS::rotation_message(&ab_1, [0u8; 32]),
     );
 
     let genesis_proof = RAPS::construct_genesis_proof(
@@ -97,7 +92,7 @@ fn main() {
         &ab_genesis,
         &ab_1,
         &Signatures(genesis_signatures.to_smallvec()),
-        &[0u8; 48],
+        &[0u8; 32],
     );
 
     let ab_genesis_hash = ab_rotation_lib::address_book::serialize_and_digest_sha256(&ab_genesis);
@@ -109,6 +104,8 @@ fn main() {
     // simulate 10 rotations
     for _day in 0..10 {
         assert!(RAPS::verify_proof(&vk, &prev_proof));
+        println!("Found valid proof: ");
+        debug(&prev_proof);
 
         let (next_signing_keys, next_verifying_keys) = generate_signers::<5>();
         let next_ab = AddressBook::new::<5>(
@@ -119,11 +116,7 @@ fn main() {
         let signatures = subset_sign(
             &prev_signing_keys,
             &[true; 5],
-            &RAPS::rotation_message(
-                &next_ab,
-                #[cfg(feature = "with_bls_aggregate")]
-                [0u8; 48],
-            ),
+            &RAPS::rotation_message(&next_ab, [0u8; 32]),
         );
 
         let next_proof = RAPS::construct_rotation_proof(
@@ -133,8 +126,7 @@ fn main() {
             &prev_ab,
             &next_ab,
             prev_proof,
-            #[cfg(feature = "with_bls_aggregate")]
-            &[0u8; 48],
+            &[0u8; 32],
             &Signatures(signatures.to_smallvec()),
         );
 
@@ -142,6 +134,27 @@ fn main() {
         prev_ab = next_ab;
         prev_signing_keys = next_signing_keys;
     }
+}
+
+fn debug(proof: &SP1ProofWithPublicValues) {
+    let parsed_proof = PublicValuesStruct::abi_decode(&proof.public_values.to_vec(), true).unwrap();
+    println!("Info from prev_proof:");
+    println!(
+        "ab_genesis_hash: 0x{}",
+        hex::encode(parsed_proof.ab_genesis_hash)
+    );
+    println!(
+        "ab_curr_hash:    0x{}",
+        hex::encode(parsed_proof.ab_curr_hash)
+    );
+    println!(
+        "ab_next_hash:    0x{}",
+        hex::encode(parsed_proof.ab_next_hash)
+    );
+    println!(
+        "tss_vk:          0x{}",
+        hex::encode(parsed_proof.tss_vk_hash)
+    );
 }
 
 fn _ser_then_deser(proof: &SP1ProofWithPublicValues) -> SP1ProofWithPublicValues {
@@ -165,8 +178,7 @@ fn _create_proof_fixture(proof: &SP1ProofWithPublicValues, vk: &SP1VerifyingKey,
         ab_genesis_hash,
         ab_curr_hash,
         ab_next_hash,
-        #[cfg(feature = "with_bls_aggregate")]
-        bls_aggregate_key,
+        tss_vk_hash,
     } = PublicValuesStruct::abi_decode(bytes, true).unwrap();
 
     // Create the testing fixture so we can test things end-to-end.
@@ -174,8 +186,7 @@ fn _create_proof_fixture(proof: &SP1ProofWithPublicValues, vk: &SP1VerifyingKey,
         ab_genesis_hash: *ab_genesis_hash,
         ab_curr_hash: *ab_curr_hash,
         ab_next_hash: *ab_next_hash,
-        #[cfg(feature = "with_bls_aggregate")]
-        bls_aggregate_key: bls_aggregate_key.to_vec().try_into().unwrap(),
+        tss_vk_next_hash: *tss_vk_hash,
         vkey: vk.bytes32().to_string(),
         public_values: format!("0x{}", hex::encode(bytes)),
         proof: format!("0x{}", hex::encode(proof.bytes())),
@@ -202,18 +213,7 @@ fn _create_proof_fixture(proof: &SP1ProofWithPublicValues, vk: &SP1VerifyingKey,
         std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../contracts/src/fixtures");
     std::fs::create_dir_all(&fixture_path).expect("failed to create fixture path");
     std::fs::write(
-        fixture_path.join(
-            format!(
-                "{}-fixture{}.json",
-                name,
-                if cfg!(feature = "with_bls_aggregate") {
-                    "-with_bls_aggregate"
-                } else {
-                    ""
-                }
-            )
-            .to_lowercase(),
-        ),
+        fixture_path.join(format!("{}-fixture.json", name).to_lowercase()),
         serde_json::to_string_pretty(&fixture).unwrap(),
     )
     .expect("failed to write fixture");

@@ -2,7 +2,9 @@ use ab_rotation_lib::{
     address_book::{AddressBook, Signatures},
     ed25519::{Signature, SigningKey, VerifyingKey},
     statement::Statement,
+    PublicValuesStruct,
 };
+use alloy_sol_types::SolType;
 use sp1_sdk::{
     HashableKey, ProverClient, SP1ProofWithPublicValues, SP1ProvingKey, SP1Stdin, SP1VerifyingKey,
 };
@@ -20,21 +22,14 @@ impl RAPS {
         sk.sign(message)
     }
 
-    pub fn rotation_message(
-        ab_next: &AddressBook,
-        #[cfg(feature = "with_bls_aggregate")] bls_aggregate_key: [u8; 48],
-    ) -> Vec<u8> {
+    pub fn rotation_message(ab_next: &AddressBook, tss_vk_hash: [u8; 32]) -> Vec<u8> {
         let ab_next_hash = ab_rotation_lib::address_book::serialize_and_digest_sha256(&ab_next);
 
-        let message = [
-            ab_next_hash.as_slice(),
-            #[cfg(feature = "with_bls_aggregate")]
-            bls_aggregate_key.as_slice(),
-        ]
-        .into_iter()
-        .flatten()
-        .copied()
-        .collect::<Vec<_>>();
+        let message = [ab_next_hash.as_slice(), tss_vk_hash.as_slice()]
+            .into_iter()
+            .flatten()
+            .copied()
+            .collect::<Vec<_>>();
 
         message
     }
@@ -56,7 +51,7 @@ impl RAPS {
         ab_genesis: &AddressBook, // genesis AddressBook
         ab_next: &AddressBook,    // next AddressBook
         signatures: &Signatures,  // signatures attesting the next AddressBook
-        hints_vk: &[u8; 48],      // the BLS aggregate key for the next AddressBook
+        tss_vk_hash: &[u8; 32],   // TSS verification key hash for the next AddressBook
     ) -> SP1ProofWithPublicValues {
         // Setup the prover client.
         let client = ProverClient::new();
@@ -72,8 +67,7 @@ impl RAPS {
             ab_genesis,
             ab_next,
             signatures,
-            #[cfg(feature = "with_bls_aggregate")]
-            *hints_vk,
+            tss_vk_hash.to_owned(),
         );
         println!("Statement generation took {:?}", start_time.elapsed());
 
@@ -104,8 +98,8 @@ impl RAPS {
         ab_curr: &AddressBook,                // current AddressBook
         ab_next: &AddressBook,                // next AddressBook
         prev_proof: SP1ProofWithPublicValues, // the previous proof
-        #[cfg(feature = "with_bls_aggregate")] hints_vk: &[u8; 48], // the BLS aggregate key for the next AddressBook
-        signatures: &Signatures, // signatures attesting the next AddressBook
+        tss_vk_hash: &[u8; 32],               // TSS verification key for the next AddressBook
+        signatures: &Signatures,              // signatures attesting the next AddressBook
     ) -> SP1ProofWithPublicValues {
         // Setup the prover client.
         let client = ProverClient::new();
@@ -117,8 +111,7 @@ impl RAPS {
             ab_curr,
             ab_next,
             signatures,
-            #[cfg(feature = "with_bls_aggregate")]
-            *hints_vk,
+            *tss_vk_hash,
         );
 
         // Setup the inputs.
@@ -164,26 +157,22 @@ fn generate_statement(
     ab_curr: &AddressBook,
     ab_next: &AddressBook,
     signatures: &Signatures,
-    #[cfg(feature = "with_bls_aggregate")] bls_aggregate_key: [u8; 48],
+    tss_vk_next_hash: [u8; 32],
 ) -> ([u8; 32], [u8; 32], Statement) {
     let ab_curr_hash = ab_rotation_lib::address_book::serialize_and_digest_sha256(&ab_curr);
     let ab_next_hash = ab_rotation_lib::address_book::serialize_and_digest_sha256(&ab_next);
 
     let ab_prev_hash = prev_proof.map(|prev_proof| {
-        // HACK: cannot cleanly `Deserialize` into `PublicValues`
-        let prev_proof = bincode::deserialize::<([u8; 32], [u8; 32], [u8; 32])>(
-            &prev_proof.public_values.to_vec(),
-        )
-        .unwrap();
-        println!("Info from prev_proof:");
-        println!("ab_genesis_hash: 0x{}", hex::encode(prev_proof.0));
-        println!("ab_curr_hash:    0x{}", hex::encode(prev_proof.1));
-        println!("ab_next_hash:    0x{}", hex::encode(prev_proof.2));
-        prev_proof.1
+        let parsed_prev_proof =
+            PublicValuesStruct::abi_decode(&prev_proof.public_values.to_vec(), true).unwrap();
+        parsed_prev_proof.ab_curr_hash.0
     });
 
-    // we just copy this over
-    let signatures = signatures.clone();
+    let tss_vk_prev_hash = prev_proof.map(|prev_proof| {
+        let parsed_prev_proof =
+            PublicValuesStruct::abi_decode(&prev_proof.public_values.to_vec(), true).unwrap();
+        parsed_prev_proof.tss_vk_hash.0
+    });
 
     let statement = Statement {
         vk_digest,
@@ -191,9 +180,9 @@ fn generate_statement(
         ab_prev_hash,
         ab_curr: ab_curr.clone(),
         ab_next_hash,
-        #[cfg(feature = "with_bls_aggregate")]
-        bls_aggregate_key: serde_big_array::Array(bls_aggregate_key),
-        signatures,
+        tss_vk_prev_hash,
+        tss_vk_next_hash,
+        signatures: signatures.clone(),
     };
 
     (ab_curr_hash, ab_next_hash, statement)

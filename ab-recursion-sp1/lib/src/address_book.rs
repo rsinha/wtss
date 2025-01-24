@@ -5,8 +5,6 @@ use smallvec::SmallVec;
 
 use crate::ed25519;
 
-#[cfg(feature = "with_bls_aggregate")]
-pub type BlsPublicKey = [u8; 48];
 pub type Weight = u64;
 
 pub const MAXIMUM_VALIDATORS: usize = 64;

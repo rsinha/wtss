@@ -49,12 +49,15 @@ pub fn main() {
             .ab_prev_hash
             .expect("ab_prev_hash needed proving the recursive SP1 proof");
 
+        let tss_vk_prev_hash = statement
+            .tss_vk_prev_hash
+            .expect("tss_vk_prev needed proving the recursive SP1 proof");
+
         let prev_pv = PublicValuesStruct {
             ab_genesis_hash: ab_genesis_hash.into(),
             ab_curr_hash: ab_prev_hash.into(),
             ab_next_hash: ab_curr_hash.into(),
-            #[cfg(feature = "with_bls_aggregate")]
-            bls_aggregate_key: statement.bls_aggregate_key.0.into(),
+            tss_vk_hash: tss_vk_prev_hash.into(),
         };
 
         let prev_pv_abi_encoded = prev_pv.abi_encode();
@@ -69,8 +72,7 @@ pub fn main() {
 
     let message = [
         statement.ab_next_hash.as_slice(),
-        #[cfg(feature = "with_bls_aggregate")]
-        statement.bls_aggregate_key.as_slice(),
+        statement.tss_vk_next_hash.as_slice(),
     ]
     .into_iter()
     .flatten()
@@ -96,8 +98,7 @@ pub fn main() {
         ab_genesis_hash: ab_genesis_hash.into(),
         ab_curr_hash: ab_curr_hash.into(),
         ab_next_hash: ab_next_hash.into(),
-        #[cfg(feature = "with_bls_aggregate")]
-        bls_aggregate_key: statement.bls_aggregate_key.0.into(),
+        tss_vk_hash: statement.tss_vk_next_hash.into(),
     };
 
     sp1_zkvm::io::commit_slice(&public_values.abi_encode());

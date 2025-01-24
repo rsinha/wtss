@@ -10,4 +10,3 @@ ab-rotation-lib = { workspace = true }
 
 [features]
 default = []
-with_bls_aggregate = ["ab-rotation-lib/with_bls_aggregate"]

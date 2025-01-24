@@ -29,4 +29,3 @@ sp1-helper = { workspace = true }
 [features]
 default = []
 cuda = ["sp1-sdk/cuda"]
-with_bls_aggregate = ["ab-rotation-lib/with_bls_aggregate"]
