@@ -85,16 +85,17 @@ fn main() {
         &RAPS::rotation_message(&ab_1, [0u8; 32]),
     );
 
-    let genesis_proof = RAPS::construct_genesis_proof(
+    let ab_genesis_hash = ab_rotation_lib::address_book::serialize_and_digest_sha256(&ab_genesis);
+    let genesis_proof = RAPS::construct_rotation_proof(
         &pk,
         &vk,
+        &ab_genesis_hash,
         &ab_genesis,
         &ab_1,
-        &Signatures(genesis_signatures.to_smallvec()),
+        None,
         &[0u8; 32],
+        &Signatures(genesis_signatures.to_smallvec()),
     );
-
-    let ab_genesis_hash = ab_rotation_lib::address_book::serialize_and_digest_sha256(&ab_genesis);
 
     let mut prev_ab = ab_1;
     let mut prev_proof = genesis_proof;
@@ -131,7 +132,7 @@ fn main() {
             &ab_genesis_hash,
             &prev_ab,
             &next_ab,
-            prev_proof,
+            Some(prev_proof),
             &[0u8; 32],
             &Signatures(signatures.to_smallvec()),
         );
@@ -145,23 +146,24 @@ fn main() {
 
 fn debug(proof: &SP1ProofWithPublicValues) {
     let parsed_proof = PublicValuesStruct::abi_decode(&proof.public_values.to_vec(), true).unwrap();
-    println!("Info from prev_proof:");
+    println!("-------- BEGIN Roster Attestation Proof --------");
     println!(
         "ab_genesis_hash: 0x{}",
-        hex::encode(parsed_proof.ab_genesis_hash)
+        &hex::encode(parsed_proof.ab_genesis_hash)[..8]
     );
     println!(
         "ab_curr_hash:    0x{}",
-        hex::encode(parsed_proof.ab_curr_hash)
+        &hex::encode(parsed_proof.ab_curr_hash)[..8]
     );
     println!(
         "ab_next_hash:    0x{}",
-        hex::encode(parsed_proof.ab_next_hash)
+        &hex::encode(parsed_proof.ab_next_hash)[..8]
     );
     println!(
         "tss_vk:          0x{}",
-        hex::encode(parsed_proof.tss_vk_hash)
+        &hex::encode(parsed_proof.tss_vk_hash)[..8]
     );
+    println!("-------- END Roster Attestation Proof --------");
 }
 
 fn _ser_then_deser(proof: &SP1ProofWithPublicValues) -> SP1ProofWithPublicValues {

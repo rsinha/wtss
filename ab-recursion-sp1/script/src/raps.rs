@@ -44,69 +44,67 @@ impl RAPS {
         (pk, vk)
     }
 
-    /// Creates the first proof for the genesis AddressBook.
-    pub fn construct_genesis_proof(
-        pk: &SP1ProvingKey,       // proving key output by sp1 setup
-        vk: &SP1VerifyingKey,     // verifying key output by sp1 setup
-        ab_genesis: &AddressBook, // genesis AddressBook
-        ab_next: &AddressBook,    // next AddressBook
-        signatures: &Signatures,  // signatures attesting the next AddressBook
-        tss_vk_hash: &[u8; 32],   // TSS verification key hash for the next AddressBook
-    ) -> SP1ProofWithPublicValues {
-        // Setup the prover client.
-        let client = ProverClient::new();
+    // /// Creates the first proof for the genesis AddressBook.
+    // pub fn construct_genesis_proof(
+    //     pk: &SP1ProvingKey,       // proving key output by sp1 setup
+    //     vk: &SP1VerifyingKey,     // verifying key output by sp1 setup
+    //     ab_genesis: &AddressBook, // genesis AddressBook
+    //     ab_next: &AddressBook,    // next AddressBook
+    //     signatures: &Signatures,  // signatures attesting the next AddressBook
+    //     tss_vk_hash: &[u8; 32],   // TSS verification key hash for the next AddressBook
+    // ) -> SP1ProofWithPublicValues {
+    //     // Setup the prover client.
+    //     let client = ProverClient::new();
 
-        let ab_genesis_hash =
-            ab_rotation_lib::address_book::serialize_and_digest_sha256(&ab_genesis);
+    //     let ab_genesis_hash =
+    //         ab_rotation_lib::address_book::serialize_and_digest_sha256(&ab_genesis);
 
-        let start_time = std::time::Instant::now();
-        let (_, _, stmt) = generate_statement(
-            ab_genesis_hash,
-            None,
-            vk.hash_u32(),
-            ab_genesis,
-            ab_next,
-            signatures,
-            tss_vk_hash.to_owned(),
-        );
-        println!("Statement generation took {:?}", start_time.elapsed());
+    //     let (_, _, stmt) = generate_statement(
+    //         ab_genesis_hash,
+    //         None,
+    //         vk.hash_u32(),
+    //         ab_genesis,
+    //         ab_next,
+    //         signatures,
+    //         tss_vk_hash.to_owned(),
+    //     );
 
-        // Setup the inputs.
-        let mut stdin = SP1Stdin::new();
-        stdin.write(&stmt);
+    //     // Setup the inputs.
+    //     let mut stdin = SP1Stdin::new();
+    //     stdin.write(&stmt);
 
-        println!("ab_genesis_hash: 0x{}", hex::encode(ab_genesis_hash));
+    //     println!("ab_genesis_hash: 0x{}", hex::encode(ab_genesis_hash));
 
-        // Generate the proofs
-        let start_time = std::time::Instant::now();
-        let proof: SP1ProofWithPublicValues = client
-            .prove(pk, stdin.clone())
-            .compressed()
-            .run()
-            .expect("failed to generate proof");
+    //     // Generate the proofs
+    //     let start_time = std::time::Instant::now();
+    //     let proof: SP1ProofWithPublicValues = client
+    //         .prove(pk, stdin.clone())
+    //         .compressed()
+    //         .run()
+    //         .expect("failed to generate proof");
 
-        println!("Proof generation took {:?}", start_time.elapsed());
-        proof
-    }
+    //     println!("Proof generation took {:?}", start_time.elapsed());
+    //     proof
+    // }
 
     #[allow(clippy::too_many_arguments)]
     /// Creates the first proof for the genesis AddressBook.
     pub fn construct_rotation_proof(
-        pk: &SP1ProvingKey,                   // proving key output by sp1 setup
-        vk: &SP1VerifyingKey,                 // verifying key output by sp1 setup
-        ab_genesis_hash: &[u8; 32],           // genesis AddressBook hash
-        ab_curr: &AddressBook,                // current AddressBook
-        ab_next: &AddressBook,                // next AddressBook
-        prev_proof: SP1ProofWithPublicValues, // the previous proof
-        tss_vk_hash: &[u8; 32],               // TSS verification key for the next AddressBook
-        signatures: &Signatures,              // signatures attesting the next AddressBook
+        pk: &SP1ProvingKey,                           // proving key output by sp1 setup
+        vk: &SP1VerifyingKey,                         // verifying key output by sp1 setup
+        ab_genesis_hash: &[u8; 32],                   // genesis AddressBook hash
+        ab_curr: &AddressBook,                        // current AddressBook
+        ab_next: &AddressBook,                        // next AddressBook
+        prev_proof: Option<SP1ProofWithPublicValues>, // the previous proof
+        tss_vk_hash: &[u8; 32], // TSS verification key for the next AddressBook
+        signatures: &Signatures, // signatures attesting the next AddressBook
     ) -> SP1ProofWithPublicValues {
         // Setup the prover client.
         let client = ProverClient::new();
 
         let (ab_curr_hash, ab_next_hash, stmt) = generate_statement(
             *ab_genesis_hash,
-            Some(&prev_proof),
+            prev_proof.as_ref(),
             vk.hash_u32(),
             ab_curr,
             ab_next,
@@ -117,15 +115,19 @@ impl RAPS {
         // Setup the inputs.
         let mut stdin = SP1Stdin::new();
         stdin.write(&stmt);
-        stdin.write_proof(
-            *prev_proof.proof.try_as_compressed().unwrap(),
-            vk.vk.clone(),
-        );
+        if let Some(prev_proof) = prev_proof {
+            stdin.write_proof(
+                *prev_proof.proof.try_as_compressed().unwrap(),
+                vk.vk.clone(),
+            );
+        }
 
-        println!("Hashes to be proved:");
-        println!("ab_genesis_hash: 0x{}", hex::encode(ab_genesis_hash));
-        println!("ab_curr_hash:    0x{}", hex::encode(ab_curr_hash));
-        println!("ab_next_hash:    0x{}", hex::encode(ab_next_hash));
+        println!(
+            "Invoking proof for rotation from 0x{} to 0x{} (genesis 0x{})",
+            &hex::encode(ab_curr_hash)[..8],
+            &hex::encode(ab_next_hash)[..8],
+            &hex::encode(ab_genesis_hash)[..8]
+        );
 
         let start_time = std::time::Instant::now();
         // Generate the proofs
