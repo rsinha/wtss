@@ -36,14 +36,26 @@ impl AddressBook {
         self.0.iter()
     }
 
-    pub fn new<const N: usize>(
-        verifying_keys: [[u8; ed25519_dalek::PUBLIC_KEY_LENGTH]; N],
-        weights: [u64; N],
+    pub fn new(
+        verifying_keys: Vec<[u8; ed25519_dalek::PUBLIC_KEY_LENGTH]>,
+        weights: Vec<u64>,
     ) -> Self {
-        let entries: [AddressBookEntry; N] = core::array::from_fn(|i| AddressBookEntry {
-            ed25519_public_key: Array(verifying_keys[i]),
-            weight: weights[i],
-        });
+        assert!(
+            verifying_keys.len() <= MAXIMUM_VALIDATORS,
+            "Too many verifying keys"
+        );
+        assert!(
+            verifying_keys.len() == weights.len(),
+            "Different number of verifying keys and weights"
+        );
+        let entries: Vec<AddressBookEntry> = verifying_keys
+            .iter()
+            .zip(weights.iter())
+            .map(|(vk, w)| AddressBookEntry {
+                ed25519_public_key: Array(*vk),
+                weight: *w,
+            })
+            .collect();
         AddressBook(SmallVec::from_vec(entries.to_vec()))
     }
 }

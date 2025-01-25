@@ -170,9 +170,12 @@ mod tests {
 
         // AB 0 (genesis AB)
         let (genesis_signing_keys, genesis_verifying_keys) = generate_signers::<5>();
-        let ab_genesis = AddressBook::new::<5>(
-            core::array::from_fn(|i| genesis_verifying_keys[i].to_bytes()),
-            [1; 5],
+        let ab_genesis = AddressBook::new(
+            genesis_verifying_keys
+                .iter()
+                .map(|vk| vk.to_bytes())
+                .collect(),
+            [1; 5].to_vec(),
         );
 
         let genesis_signatures = subset_sign(
@@ -211,9 +214,9 @@ mod tests {
                 (prev_signing_keys.clone(), prev_verifying_keys.clone())
             };
 
-            let next_ab = AddressBook::new::<5>(
-                core::array::from_fn(|i| next_verifying_keys[i].to_bytes()),
-                [1; 5],
+            let next_ab = AddressBook::new(
+                next_verifying_keys.iter().map(|vk| vk.to_bytes()).collect(),
+                [1; 5].to_vec(),
             );
 
             let signatures = subset_sign(
