@@ -36,10 +36,7 @@ impl AddressBook {
         self.0.iter()
     }
 
-    pub fn new(
-        verifying_keys: Vec<[u8; ed25519_dalek::PUBLIC_KEY_LENGTH]>,
-        weights: Vec<u64>,
-    ) -> Self {
+    pub fn new(verifying_keys: Vec<ed25519::VerifyingKey>, weights: Vec<u64>) -> Self {
         assert!(
             verifying_keys.len() <= MAXIMUM_VALIDATORS,
             "Too many verifying keys"
@@ -52,7 +49,7 @@ impl AddressBook {
             .iter()
             .zip(weights.iter())
             .map(|(vk, w)| AddressBookEntry {
-                ed25519_public_key: Array(*vk),
+                ed25519_public_key: Array(vk.to_bytes()),
                 weight: *w,
             })
             .collect();
