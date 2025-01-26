@@ -1,0 +1,15 @@
+[package]
+name = "wtss"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+hints-bls12381 = { path = "./hints" }
+ab-rotation-script = { path = "./raps/script" }
+rand = { version = "^0.8.0" }
+rand_chacha = { version = "^0.3.0" }
+serde = { version = "1.0.200", default-features = false, features = ["derive"] }
+serde-hex = "0.1.0"
+
+[profile.dev]
+opt-level = 3
