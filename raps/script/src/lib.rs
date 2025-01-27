@@ -23,9 +23,13 @@ pub fn sign(sk: impl AsRef<[u8]>, message: impl AsRef<[u8]>) -> Vec<u8> {
     sk.sign(message.as_ref()).0.to_vec()
 }
 
-pub fn address_book_hash(verifying_keys: Vec<impl AsRef<[u8]>>, weights: Vec<u64>) -> [u8; 32] {
+pub fn compute_address_book_hash(verifying_keys: Vec<impl AsRef<[u8]>>, weights: Vec<u64>) -> [u8; 32] {
     let ab = build_address_book(verifying_keys, weights);
     ab_rotation_lib::address_book::serialize_and_digest_sha256(&ab)
+}
+
+pub fn compute_tss_vk_hash(tss_vk: impl AsRef<[u8]>) -> [u8; 32] {
+    ab_rotation_lib::address_book::digest_sha256(tss_vk)
 }
 
 pub fn rotation_message(ab_hash: &[u8; 32], tss_vk_hash: &[u8; 32]) -> Vec<u8> {

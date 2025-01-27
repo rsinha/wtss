@@ -1,4 +1,10 @@
-pub const AB_ROTATION_ELF: &[u8] = include_bytes!("ab-rotation-program");
+use std::collections::HashMap;
+
+use hints_bls12381::hints as HinTS;
+use hints_bls12381::setup as HinTS_setup;
+use hints_bls12381::hints::HinTS as HinTS_scheme;
+use hints_bls12381::hints::*;
+use ark_std::rand::Rng;
 
 #[derive(Debug, Clone)]
 pub struct Roster {
@@ -42,16 +48,87 @@ impl Roster {
     }
 }
 
-fn main() {
-    let tss_vk_hash = [0u8; 32];
+fn sample_universe(
+    n: usize,
+) -> (
+    HinTS::CRS,
+    HinTS::AggregationKey,
+    HinTS::VerificationKey,
+    Vec<HinTS::SecretKey>,
+    Vec<HinTS::ExtendedPublicKey>,
+) {
+    let num_signers = n - 1;
 
+    // -------------- sample one-time SRS ---------------
+    let init_crs = HinTS_setup::PowersOfTauProtocol::init(n);
+    // WARN: supply a random seed, not a fixed one as shown here.
+    let (crs, proof) = HinTS_setup::PowersOfTauProtocol::contribute(&init_crs, [86u8; 32]);
+    assert!(HinTS_setup::PowersOfTauProtocol::verify_contribution(
+        &init_crs, &crs, &proof
+    ));
+
+    // -------------- sample universe specific values ---------------
+    //sample random keys
+    // WARN: supply a random seed, not a fixed one as shown here.
+    let sks: Vec<HinTS::SecretKey> = (0..num_signers).map(|_| HinTS_scheme::keygen([42u8; 32])).collect();
+
+    let epks = (0..num_signers)
+        .map(|i| HinTS_scheme::hint_gen(&crs, n, i, &sks[i]))
+        .collect::<Vec<HinTS::ExtendedPublicKey>>();
+
+    //sample random weights for each party
+    let weights = sample_weights(num_signers);
+
+    // -------------- perform universe setup ---------------
+    let signers_info: HashMap<usize, (HinTS::Weight, HinTS::ExtendedPublicKey)> = (0..num_signers)
+        .map(|i| (i, (weights[i], epks[i].clone())))
+        .collect();
+
+    //run universe setup
+    let (vk, ak) = HinTS_scheme::preprocess(n, &crs, &signers_info);
+
+    (crs, ak, vk, sks, epks)
+}
+
+fn sample_weights(n: usize) -> Vec<ark_bls12_381::Fr> {
+    let rng = &mut ark_std::test_rng();
+    (0..n)
+        .map(|_| ark_bls12_381::Fr::from(rng.gen_range(1..10)) + ark_bls12_381::Fr::from(10))
+        .collect()
+}
+
+fn sample_signing(
+    num_signers: usize,
+    msg: &[u8],
+    sks: &Vec<HinTS::SecretKey>,
+    probability: f64
+) -> HashMap<usize, HinTS::PartialSignature> {
+    //samples n-1 random bits
+    let bitmap: Vec<bool> = {
+        let rng = &mut ark_std::test_rng();
+        (0..num_signers).map(|_| rng.gen_bool(probability)).collect()
+    };
+
+    // for all the active parties, sample partial signatures
+    // filter our bitmap indices that are 1
+    let mut sigs = HashMap::new();
+    bitmap.iter().enumerate().for_each(|(i, &active)| {
+        if active {
+            sigs.insert(i, HinTS_scheme::sign(msg, &sks[i]));
+        }
+    });
+
+    sigs
+}
+
+fn main() {
     // Setup the program.
     let elf = include_bytes!("ab-rotation-program");
     let (pk, vk) = ab_rotation_script::proof_setup(elf);
 
     // AB 0 (genesis AB)
     let genesis_committee = Roster::new(5);
-    let genesis_ab_hash = ab_rotation_script::address_book_hash(
+    let genesis_ab_hash = ab_rotation_script::compute_address_book_hash(
         genesis_committee.verifying_keys.clone(),
         genesis_committee.weights.clone(),
     );
@@ -72,7 +149,7 @@ fn main() {
         &[0u8; 32],
         genesis_committee.subset_sign(
             &[true; 5],
-            &ab_rotation_script::rotation_message(&genesis_ab_hash, &tss_vk_hash),
+            &ab_rotation_script::rotation_message(&genesis_ab_hash, &[0u8; 32]),
         ),
     );
 
@@ -81,18 +158,21 @@ fn main() {
 
     // simulate a few rotations
     for day in 0..15 {
-        assert!(ab_rotation_script::verify_proof(&vk, &prev_proof));
-
         let next_roster = if day % 2 == 0 {
             Roster::new(5)
         } else {
             prev_roster.clone()
         };
-        let next_roster_hash = ab_rotation_script::address_book_hash(
+        let next_roster_hash = ab_rotation_script::compute_address_book_hash(
             next_roster.verifying_keys.clone(),
             next_roster.weights.clone(),
         );
 
+        // compute HinTS verification key
+        let (tss_crs, tss_ak, tss_vk, tss_sks, _) = sample_universe(32);
+        let tss_vk_hash = ab_rotation_script::compute_tss_vk_hash(&HinTS::serialize(&tss_vk));
+
+        // perform AB rotation
         let next_proof = ab_rotation_script::construct_rotation_proof(
             &pk,
             &vk,
@@ -106,12 +186,22 @@ fn main() {
                 next_roster.weights.clone(),
             ),
             Some(prev_proof),
-            &[0u8; 32],
+            &tss_vk_hash,
             prev_roster.subset_sign(
                 &[true; 5],
                 &ab_rotation_script::rotation_message(&next_roster_hash, &tss_vk_hash),
             ),
         );
+
+        // generate a HinTS proof
+        let platform_state_root = [0u8; 48];
+        let sigs = sample_signing(31, &platform_state_root, &tss_sks, 0.75);
+        let hints_proof = HinTS_scheme::aggregate(&tss_crs, &tss_ak, &tss_vk, &sigs);
+
+        let threshold = (F::from(1), F::from(3)); // 1/3
+        assert!(HinTS_scheme::verify(&tss_crs, &platform_state_root, &tss_vk, &hints_proof, threshold));
+        
+        assert!(ab_rotation_script::verify_proof(&vk, &next_proof));
 
         prev_proof = next_proof;
         prev_roster = next_roster;
