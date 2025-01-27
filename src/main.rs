@@ -200,7 +200,6 @@ fn main() {
 
         let threshold = (F::from(1), F::from(3)); // 1/3
         assert!(HinTS_scheme::verify(&tss_crs, &platform_state_root, &tss_vk, &hints_proof, threshold));
-        
         assert!(ab_rotation_script::verify_proof(&vk, &next_proof));
 
         prev_proof = next_proof;

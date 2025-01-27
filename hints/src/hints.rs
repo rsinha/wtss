@@ -559,7 +559,6 @@ impl HinTS {
     /// verifies whether the threshold signature is valid and
     /// satisfies the desired threshold fraction
     pub fn verify(
-        crs: &CRS,
         msg: &[u8],
         vk: &VerificationKey,
         π: &ThresholdSignature,
@@ -571,7 +570,7 @@ impl HinTS {
 
         // verify the signature first
         let lhs = <Curve as Pairing>::pairing(&π.agg_pk, hash_to_g2(msg));
-        let rhs = <Curve as Pairing>::pairing(crs.powers_of_g[0], &π.agg_sig);
+        let rhs = <Curve as Pairing>::pairing(vk.g_0, &π.agg_sig);
         check_or_return_false!(lhs == rhs);
 
         // compute nth root of unity
@@ -897,21 +896,15 @@ mod tests {
         let π = HinTS::aggregate(&crs, &ak, &vk, &sigs);
 
         let threshold = (F::from(1), F::from(3)); // 1/3
-        assert!(HinTS::verify(&crs, msg, &vk, &π, threshold));
+        assert!(HinTS::verify(msg, &vk, &π, threshold));
 
         // attack the proof
         let mut π_attack = π.clone();
         π_attack.agg_weight = F::from(1000000000); // some arbitrary weight
-        assert!(!HinTS::verify(&crs, msg, &vk, &π_attack, threshold));
+        assert!(!HinTS::verify(msg, &vk, &π_attack, threshold));
 
         // try a really high threshold of 99%
-        assert!(!HinTS::verify(
-            &crs,
-            msg,
-            &vk,
-            &π_attack,
-            (F::from(99), F::from(100))
-        ));
+        assert!(!HinTS::verify(msg, &vk, &π_attack, (F::from(99), F::from(100))));
     }
 
     fn sample_signing(
