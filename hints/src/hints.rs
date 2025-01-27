@@ -827,6 +827,8 @@ pub fn deserialize<T: CanonicalDeserialize>(buf: &[u8]) -> T {
     T::deserialize_uncompressed(buf).unwrap()
 }
 
+pub fn weight(weight: u64) -> Weight { F::from(weight) }
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -986,7 +988,6 @@ mod tests {
         let rng = &mut ark_std::test_rng();
         let mut bitmap = vec![];
         for _i in 0..n {
-            //let r = u64::rand(&mut rng);
             let bit = rng.gen_bool(probability);
             bitmap.push(F::from(bit));
         }

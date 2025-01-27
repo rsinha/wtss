@@ -1,10 +1,10 @@
 use std::collections::HashMap;
+use rand::Rng;
 
 use hints_bls12381::hints as HinTS;
 use hints_bls12381::setup as HinTS_setup;
 use hints_bls12381::hints::HinTS as HinTS_scheme;
 use hints_bls12381::hints::*;
-use ark_std::rand::Rng;
 
 #[derive(Debug, Clone)]
 pub struct Roster {
@@ -90,10 +90,10 @@ fn sample_universe(
     (crs, ak, vk, sks, epks)
 }
 
-fn sample_weights(n: usize) -> Vec<ark_bls12_381::Fr> {
-    let rng = &mut ark_std::test_rng();
+fn sample_weights(n: usize) -> Vec<HinTS::Weight> {
+    let mut csprng = rand::rngs::OsRng;
     (0..n)
-        .map(|_| ark_bls12_381::Fr::from(rng.gen_range(1..10)) + ark_bls12_381::Fr::from(10))
+        .map(|_| HinTS::weight(csprng.gen_range(5..8)))
         .collect()
 }
 
@@ -105,8 +105,8 @@ fn sample_signing(
 ) -> HashMap<usize, HinTS::PartialSignature> {
     //samples n-1 random bits
     let bitmap: Vec<bool> = {
-        let rng = &mut ark_std::test_rng();
-        (0..num_signers).map(|_| rng.gen_bool(probability)).collect()
+        let mut csprng = rand::rngs::OsRng;
+        (0..num_signers).map(|_| csprng.gen_bool(probability)).collect()
     };
 
     // for all the active parties, sample partial signatures

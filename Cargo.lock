@@ -6674,9 +6674,6 @@ name = "wtss"
 version = "0.1.0"
 dependencies = [
  "ab-rotation-script",
- "ark-bls12-381",
- "ark-ff 0.4.2",
- "ark-std 0.4.0",
  "hints-bls12381",
  "rand",
  "rand_chacha",
