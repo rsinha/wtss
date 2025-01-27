@@ -563,7 +563,7 @@ impl HinTS {
         msg: &[u8],
         vk: &VerificationKey,
         π: &ThresholdSignature,
-        fraction: (F, F), // e.g. (1,3) to denote 1/3 threshold
+        fraction: (Weight, Weight), // e.g. (1,3) to denote 1/3 threshold
     ) -> bool {
         // check that the threshold is satisfied
         let (numerator, denominator) = fraction;
