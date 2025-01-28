@@ -156,12 +156,14 @@ fn main() {
     let mut prev_roster = genesis_committee;
 
     // simulate a few rotations
-    for day in 0..10 {
+    for day in 10..30 {
+        // alternate between growing the roster and trimming it
         let next_roster = if day % 2 == 0 {
-            Roster::new(day + 3) //3...13
+            Roster::new(day + 3)
         } else {
-            prev_roster.clone()
+            Roster::new(day - 3)
         };
+        println!("Transitioning to a roster of size {}", next_roster.verifying_keys.len());
         let next_roster_hash = RAPS::compute_address_book_hash(
             next_roster.verifying_keys.clone(),
             next_roster.weights.clone(),
