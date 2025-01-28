@@ -195,14 +195,37 @@ fn main() {
 
         // generate a HinTS proof
         let platform_state_root = [0u8; 48];
-        let sigs = sample_signing(31, &platform_state_root, &tss_sks, 0.75);
-        let hints_proof = HinTS_scheme::aggregate(&tss_crs, &tss_ak, &tss_vk, &sigs);
 
-        let threshold = (F::from(1), F::from(3)); // 1/3
-        assert!(HinTS_scheme::verify(&tss_crs, &platform_state_root, &tss_vk, &hints_proof, threshold));
-        assert!(ab_rotation_script::verify_proof(&vk, &next_proof));
+        let hints_proof = HinTS_scheme::aggregate(
+            &tss_crs,
+            &tss_ak,
+            &tss_vk,
+            &sample_signing(31, &platform_state_root, &tss_sks, 0.75)
+        );
+
+        assert!(verify_proof(
+            &platform_state_root,
+            &HinTS::serialize(&hints_proof),
+            &next_proof,
+            &HinTS::serialize(&tss_vk),
+            &vk,
+        ));
 
         prev_proof = next_proof;
         prev_roster = next_roster;
     }
+}
+
+fn verify_proof(
+    msg: &[u8],
+    hints_proof_encoded: &[u8],
+    raps_proof_encoded: &[u8],
+    hints_vk_encoded: &[u8],
+    raps_vk_encoded: &[u8]
+) -> bool {
+    let hints_proof = HinTS::deserialize::<HinTS::ThresholdSignature>(hints_proof_encoded);
+    let hints_vk = HinTS::deserialize::<HinTS::VerificationKey>(hints_vk_encoded);
+
+    ab_rotation_script::verify_proof(raps_vk_encoded, raps_proof_encoded) &&
+    HinTS_scheme::verify(msg, &hints_vk, &hints_proof, (F::from(1), F::from(3)))
 }
