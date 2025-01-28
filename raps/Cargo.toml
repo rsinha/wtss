@@ -1,8 +1,8 @@
 [workspace]
 members = [
     "lib",
-    "program",
-    "script",
+    "zkvm_program",
+    "raps",
 ]
 resolver = "2"
 

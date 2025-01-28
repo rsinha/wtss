@@ -1,12 +1,7 @@
 [package]
 version = "0.1.0"
-name = "ab-rotation-script"
+name = "raps"
 edition = "2021"
-default-run = "ab-rotation"
-
-[[bin]]
-name = "ab-rotation"
-path = "src/bin/main.rs"
 
 [dependencies]
 bincode = { workspace = true }
