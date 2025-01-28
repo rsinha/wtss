@@ -120,6 +120,7 @@ fn sample_signing(
 }
 
 fn main() {
+    let mut rng = rand::thread_rng();
     // Setup the program.
     let elf = include_bytes!("ab-rotation-program");
     let (pk, vk) = RAPS::proof_setup(elf);
@@ -146,7 +147,7 @@ fn main() {
         None as Option<Vec<u8>>,
         &[0u8; 32],
         genesis_committee.subset_sign(
-            &[true; 5],
+            &[true, true, false, true, true],
             &RAPS::rotation_message(&genesis_ab_hash, &[0u8; 32]),
         ),
     );
@@ -186,7 +187,10 @@ fn main() {
             Some(prev_proof),
             &tss_vk_hash,
             prev_roster.subset_sign(
-                &[true; 5],
+                (0..prev_roster.signing_keys.len())
+                    .map(|_| rng.gen_bool(0.75))
+                    .collect::<Vec<bool>>()
+                    .as_slice(),
                 &RAPS::rotation_message(&next_roster_hash, &tss_vk_hash),
             ),
         );
