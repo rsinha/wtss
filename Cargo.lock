@@ -29,26 +29,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "ab-rotation-script"
-version = "0.1.0"
-dependencies = [
- "ab-rotation-lib",
- "alloy-sol-types 0.8.19",
- "bincode",
- "clap",
- "hex",
- "serde",
- "serde-big-array",
- "serde-hex",
- "serde_json",
- "sha2",
- "smallvec 1.13.2",
- "sp1-helper",
- "sp1-sdk",
- "tracing",
-]
-
-[[package]]
 name = "addchain"
 version = "0.2.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -4227,6 +4207,26 @@ dependencies = [
 ]
 
 [[package]]
+name = "raps"
+version = "0.1.0"
+dependencies = [
+ "ab-rotation-lib",
+ "alloy-sol-types 0.8.19",
+ "bincode",
+ "clap",
+ "hex",
+ "serde",
+ "serde-big-array",
+ "serde-hex",
+ "serde_json",
+ "sha2",
+ "smallvec 1.13.2",
+ "sp1-helper",
+ "sp1-sdk",
+ "tracing",
+]
+
+[[package]]
 name = "rayon"
 version = "1.10.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -6673,10 +6673,10 @@ dependencies = [
 name = "wtss"
 version = "0.1.0"
 dependencies = [
- "ab-rotation-script",
  "hints-bls12381",
  "rand",
  "rand_chacha",
+ "raps",
  "serde",
  "serde-hex",
 ]

@@ -5,6 +5,7 @@ use hints_bls12381::hints as HinTS;
 use hints_bls12381::setup as HinTS_setup;
 use hints_bls12381::hints::HinTS as HinTS_scheme;
 use hints_bls12381::hints::*;
+use raps::byteraps::ByteRAPS as RAPS;
 
 #[derive(Debug, Clone)]
 pub struct Roster {
@@ -20,7 +21,7 @@ impl Roster {
         let weights = vec![1u64; n];
 
         for _ in 0..n {
-            let (sk, vk) = ab_rotation_script::keygen();
+            let (sk, vk) = RAPS::keygen();
             signing_keys.push(sk);
             verifying_keys.push(vk);
         }
@@ -36,10 +37,7 @@ impl Roster {
         let mut signatures = Vec::new();
         for (i, &active) in signers.iter().enumerate() {
             if active {
-                signatures.push(Some(ab_rotation_script::sign(
-                    &self.signing_keys[i],
-                    message,
-                )));
+                signatures.push(Some(RAPS::sign(&self.signing_keys[i], message)));
             } else {
                 signatures.push(None);
             }
@@ -124,16 +122,16 @@ fn sample_signing(
 fn main() {
     // Setup the program.
     let elf = include_bytes!("ab-rotation-program");
-    let (pk, vk) = ab_rotation_script::proof_setup(elf);
+    let (pk, vk) = RAPS::proof_setup(elf);
 
     // AB 0 (genesis AB)
     let genesis_committee = Roster::new(5);
-    let genesis_ab_hash = ab_rotation_script::compute_address_book_hash(
+    let genesis_ab_hash = RAPS::compute_address_book_hash(
         genesis_committee.verifying_keys.clone(),
         genesis_committee.weights.clone(),
     );
 
-    let genesis_proof = ab_rotation_script::construct_rotation_proof(
+    let genesis_proof = RAPS::construct_rotation_proof(
         &pk,
         &vk,
         &genesis_ab_hash,
@@ -149,7 +147,7 @@ fn main() {
         &[0u8; 32],
         genesis_committee.subset_sign(
             &[true; 5],
-            &ab_rotation_script::rotation_message(&genesis_ab_hash, &[0u8; 32]),
+            &RAPS::rotation_message(&genesis_ab_hash, &[0u8; 32]),
         ),
     );
 
@@ -157,23 +155,23 @@ fn main() {
     let mut prev_roster = genesis_committee;
 
     // simulate a few rotations
-    for day in 0..15 {
+    for day in 0..10 {
         let next_roster = if day % 2 == 0 {
-            Roster::new(5)
+            Roster::new(day + 3) //3...13
         } else {
             prev_roster.clone()
         };
-        let next_roster_hash = ab_rotation_script::compute_address_book_hash(
+        let next_roster_hash = RAPS::compute_address_book_hash(
             next_roster.verifying_keys.clone(),
             next_roster.weights.clone(),
         );
 
         // compute HinTS verification key
         let (tss_crs, tss_ak, tss_vk, tss_sks, _) = sample_universe(32);
-        let tss_vk_hash = ab_rotation_script::compute_tss_vk_hash(&HinTS::serialize(&tss_vk));
+        let tss_vk_hash = RAPS::compute_tss_vk_hash(&HinTS::serialize(&tss_vk));
 
         // perform AB rotation
-        let next_proof = ab_rotation_script::construct_rotation_proof(
+        let next_proof = RAPS::construct_rotation_proof(
             &pk,
             &vk,
             &genesis_ab_hash,
@@ -189,7 +187,7 @@ fn main() {
             &tss_vk_hash,
             prev_roster.subset_sign(
                 &[true; 5],
-                &ab_rotation_script::rotation_message(&next_roster_hash, &tss_vk_hash),
+                &RAPS::rotation_message(&next_roster_hash, &tss_vk_hash),
             ),
         );
 
@@ -203,7 +201,7 @@ fn main() {
             &sample_signing(31, &platform_state_root, &tss_sks, 0.75)
         );
 
-        assert!(verify_proof(
+        assert!(verify_combined_proof(
             &platform_state_root,
             &HinTS::serialize(&hints_proof),
             &next_proof,
@@ -216,7 +214,7 @@ fn main() {
     }
 }
 
-fn verify_proof(
+fn verify_combined_proof(
     msg: &[u8],
     hints_proof_encoded: &[u8],
     raps_proof_encoded: &[u8],
@@ -226,6 +224,6 @@ fn verify_proof(
     let hints_proof = HinTS::deserialize::<HinTS::ThresholdSignature>(hints_proof_encoded);
     let hints_vk = HinTS::deserialize::<HinTS::VerificationKey>(hints_vk_encoded);
 
-    ab_rotation_script::verify_proof(raps_vk_encoded, raps_proof_encoded) &&
+    RAPS::verify_proof(raps_vk_encoded, raps_proof_encoded) &&
     HinTS_scheme::verify(msg, &hints_vk, &hints_proof, (F::from(1), F::from(3)))
 }
