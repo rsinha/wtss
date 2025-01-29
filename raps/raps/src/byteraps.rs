@@ -6,7 +6,7 @@ use sp1_sdk::{ProverClient, SP1ProofWithPublicValues, SP1ProvingKey, SP1Verifyin
 use ab_rotation_lib::address_book::Signatures;
 
 pub use ab_rotation_lib::address_book::AddressBook;
-pub use ab_rotation_lib::ed25519::{Signature, SigningKey, VerifyingKey};
+pub use ab_rotation_lib::ed25519::{Signature, SigningKey, VerifyingKey, ENTROPY_SIZE};
 pub use ab_rotation_lib::PublicValuesStruct;
 
 pub struct ByteRAPS {}
@@ -16,8 +16,8 @@ impl ByteRAPS {
 
     /// outputs the byte array for the signing key,
     /// followed by the byte array for the verifying key
-    pub fn keygen() -> (Vec<u8>, Vec<u8>) {
-        let (sk, vk) = RAPS::keygen();
+    pub fn keygen(seed: [u8; ENTROPY_SIZE]) -> (Vec<u8>, Vec<u8>) {
+        let (sk, vk) = RAPS::keygen(seed);
         (sk.to_bytes().to_vec(), vk.to_bytes().to_vec())
     }
 
@@ -149,7 +149,7 @@ mod tests {
             let weights = vec![1u64; n];
 
             for _ in 0..n {
-                let (sk, vk) = super::ByteRAPS::keygen();
+                let (sk, vk) = super::ByteRAPS::keygen([i as u8; ENTROPY_SIZE]);
                 signing_keys.push(sk);
                 verifying_keys.push(vk);
             }

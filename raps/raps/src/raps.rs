@@ -1,6 +1,6 @@
 use ab_rotation_lib::{
     address_book::{AddressBook, Signatures},
-    ed25519::{Signature, SigningKey, VerifyingKey},
+    ed25519::{Signature, SigningKey, VerifyingKey, ENTROPY_SIZE},
     statement::Statement,
     PublicValuesStruct,
 };
@@ -12,8 +12,8 @@ use sp1_sdk::{
 pub struct RAPS {}
 
 impl RAPS {
-    pub fn keygen() -> (SigningKey, VerifyingKey) {
-        let sk = SigningKey::generate();
+    pub fn keygen(seed: [u8; ENTROPY_SIZE]) -> (SigningKey, VerifyingKey) {
+        let sk = SigningKey::generate(seed);
         let vk = VerifyingKey(sk.0.verifying_key());
         (sk, vk)
     }
@@ -235,7 +235,8 @@ mod tests {
     }
 
     fn generate_signers<const N: usize>() -> ([SigningKey; N], [VerifyingKey; N]) {
-        let keys: [(SigningKey, VerifyingKey); N] = std::array::from_fn(|_| RAPS::keygen());
+        let keys: [(SigningKey, VerifyingKey); N] =
+            std::array::from_fn(|i| RAPS::keygen([i as u8; ENTROPY_SIZE]));
         let signing_keys: [SigningKey; N] = keys.clone().map(|sk| sk.0);
         let verifying_keys: [VerifyingKey; N] = keys.map(|sk| sk.1);
 

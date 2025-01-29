@@ -20,8 +20,8 @@ impl Roster {
         let mut signing_keys = Vec::new();
         let weights = vec![1u64; n];
 
-        for _ in 0..n {
-            let (sk, vk) = RAPS::keygen();
+        for i in 0..n {
+            let (sk, vk) = RAPS::keygen([i as u8; 32]);
             signing_keys.push(sk);
             verifying_keys.push(vk);
         }

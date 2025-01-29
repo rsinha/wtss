@@ -12,6 +12,7 @@ rand = { workspace = true }
 serde = { workspace = true }
 serde-big-array = { workspace = true }
 sha2 = { workspace = true }
+rand_chacha = { workspace = true }
 smallvec = { workspace = true }
 sp1-zkvm = { workspace = true, features = ["verify"] }
 

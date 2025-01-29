@@ -21,6 +21,7 @@ smallvec = { version = "1.13", features = ["const_generics", "serde"] }
 sp1-helper = "3.2"
 sp1-sdk = "3.2"
 sp1-zkvm = "3.2"
+rand_chacha = { version = "^0.3.0" }
 
 # Re-imported our own
 ab-rotation-lib = { path = "./common" }
