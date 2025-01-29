@@ -196,7 +196,7 @@ mod tests {
         let mut prev_signing_keys = genesis_signing_keys;
         let mut prev_verifying_keys = genesis_verifying_keys;
 
-        // simulate 10 rotations
+        // simulate 15 rotations
         for day in 0..15 {
             assert!(RAPS::verify_proof(&vk, &prev_proof));
             debug(&prev_proof);
