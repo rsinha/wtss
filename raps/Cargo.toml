@@ -1,6 +1,6 @@
 [workspace]
 members = [
-    "lib",
+    "common",
     "zkvm_program",
     "raps",
 ]
@@ -23,7 +23,7 @@ sp1-sdk = "3.2"
 sp1-zkvm = "3.2"
 
 # Re-imported our own
-ab-rotation-lib = { path = "./lib" }
+ab-rotation-lib = { path = "./common" }
 
 # NOTE: <https://docs.succinct.xyz/writing-programs/patched-crates.html>
 [patch.crates-io]
