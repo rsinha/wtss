@@ -83,14 +83,6 @@ impl RAPS {
             );
         }
 
-        println!(
-            "Invoking proof for rotation from 0x{} to 0x{} (genesis 0x{})",
-            &hex::encode(ab_curr_hash)[..8],
-            &hex::encode(ab_next_hash)[..8],
-            &hex::encode(ab_genesis_hash)[..8]
-        );
-
-        let start_time = std::time::Instant::now();
         // Generate the proofs
         let proof: SP1ProofWithPublicValues = client
             .prove(pk, stdin.clone())
@@ -98,17 +90,13 @@ impl RAPS {
             .run()
             .expect("failed to generate proof");
 
-        println!("Proof generation took {:?}", start_time.elapsed());
-
         proof
     }
 
     pub fn verify_proof(vk: &SP1VerifyingKey, proof: &SP1ProofWithPublicValues) -> bool {
-        let start_time = std::time::Instant::now();
         // Setup the prover client.
         let client = ProverClient::new();
         let verification = client.verify(proof, vk);
-        println!("Proof verification took {:?}", start_time.elapsed());
         verification.is_ok()
     }
 }
