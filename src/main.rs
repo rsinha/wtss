@@ -121,8 +121,13 @@ fn sample_signing(
 
 fn main() {
     let mut rng = rand::thread_rng();
+
+    let out_dir = std::env::var("OUT_DIR").expect("OUT_DIR not set");
+    let file_path = std::path::Path::new(&out_dir).join("ab-rotation-program");
+
     // Setup the program.
-    let elf = include_bytes!("ab-rotation-program");
+    println!("Loading elf file from {:?}", file_path);
+    let elf = std::fs::read(file_path).expect("Unable to read elf file");
     let (pk, vk) = RAPS::proof_setup(elf);
 
     // AB 0 (genesis AB)
