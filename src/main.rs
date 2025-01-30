@@ -179,6 +179,7 @@ fn main() {
         let tss_vk_hash = RAPS::compute_tss_vk_hash(&HinTS::serialize(&tss_vk));
 
         // perform AB rotation
+        let prover_time = std::time::Instant::now();
         let next_proof = RAPS::construct_rotation_proof(
             &pk,
             &vk,
@@ -201,6 +202,7 @@ fn main() {
                 &RAPS::rotation_message(&next_roster_hash, &tss_vk_hash),
             ),
         );
+        println!("Prover time: {:?}", prover_time.elapsed());
 
         // generate a HinTS proof
         let platform_state_root = [0u8; 48];
