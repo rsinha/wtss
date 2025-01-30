@@ -4,7 +4,7 @@ use std::path::Path;
 
 fn main() {
     // Define the source file (inside a folder, e.g., "binaries/my_binary")
-    let source = "./raps/elf/riscv32im-succinct-zkvm-elf"; // Change this to your actual binary file
+    let source = "./raps/target/elf-compilation/riscv32im-succinct-zkvm-elf/release/ab-rotation-program";
 
     // Define the destination path (project root)
     let out_dir = env::var("OUT_DIR").expect("OUT_DIR not set");
