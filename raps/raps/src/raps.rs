@@ -26,8 +26,9 @@ impl RAPS {
         vk.verify(message, signature)
     }
 
-    pub fn rotation_message(ab_next: &AddressBook, tss_vk_hash: [u8; 32]) -> Vec<u8> {
+    pub fn rotation_message(ab_next: &AddressBook, tss_vk: impl AsRef<[u8]>) -> Vec<u8> {
         let ab_next_hash = ab_rotation_lib::address_book::serialize_and_digest_sha256(&ab_next);
+        let tss_vk_hash: [u8; 32] = ab_rotation_lib::sha256::digest_sha256(tss_vk.as_ref());
 
         let message = [ab_next_hash.as_slice(), tss_vk_hash.as_slice()]
             .into_iter()
