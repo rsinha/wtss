@@ -6,7 +6,7 @@ use ab_rotation_lib::{
 };
 use alloy_sol_types::SolType;
 use sp1_sdk::{
-    HashableKey, ProverClient, SP1ProofWithPublicValues, SP1ProvingKey, SP1Stdin, SP1VerifyingKey,
+    HashableKey, Prover, ProverClient, SP1ProofWithPublicValues, SP1ProvingKey, SP1Stdin, SP1VerifyingKey,
 };
 
 pub struct RAPS {}
@@ -41,10 +41,10 @@ impl RAPS {
 
     pub fn proof_setup(zkvm_elf: &[u8]) -> (SP1ProvingKey, SP1VerifyingKey) {
         // Setup the prover client.
-        let client = ProverClient::from_env();
+        let prover = ProverClient::builder().mock().build();
 
         // Setup the program.
-        let (pk, vk) = client.setup(zkvm_elf);
+        let (pk, vk) = prover.setup(zkvm_elf);
 
         (pk, vk)
     }
@@ -62,7 +62,7 @@ impl RAPS {
         signatures: &Signatures, // signatures attesting the next AddressBook
     ) -> SP1ProofWithPublicValues {
         // Setup the prover client.
-        let client = ProverClient::from_env();
+        let prover = ProverClient::builder().cpu().build();
 
         let (ab_curr_hash, _ab_next_hash, stmt) = generate_statement(
             *ab_genesis_hash,
@@ -89,7 +89,7 @@ impl RAPS {
         }
 
         // Generate the proofs
-        let proof: SP1ProofWithPublicValues = client
+        let proof: SP1ProofWithPublicValues = prover
             .prove(pk, &stdin)
             .compressed()
             .run()
@@ -100,7 +100,7 @@ impl RAPS {
 
     pub fn verify_proof(vk: &SP1VerifyingKey, proof: &SP1ProofWithPublicValues) -> bool {
         // Setup the prover client.
-        let client = ProverClient::from_env();
+        let client = ProverClient::builder().cpu().build();
         let verification = client.verify(proof, vk);
         verification.is_ok()
     }
