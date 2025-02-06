@@ -16,7 +16,6 @@ dependencies = [
  "serde-big-array",
  "sha2",
  "smallvec 1.13.2",
- "sp1-zkvm",
 ]
 
 [[package]]
@@ -3742,7 +3741,6 @@ dependencies = [
  "serde_json",
  "sha2",
  "smallvec 1.13.2",
- "sp1-helper",
  "sp1-sdk",
  "tracing",
 ]
@@ -4616,26 +4614,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "sp1-helper"
-version = "4.0.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "b0fb17d71032c21ba86f741485714a260249afda15c7dd6b92f43f595356cf93"
-dependencies = [
- "sp1-build",
-]
-
-[[package]]
-name = "sp1-lib"
-version = "4.0.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "aac3d3deeed25e9cad80e4275faf5954aa63f213ed3422f0e098dd2d0c1b0c0e"
-dependencies = [
- "bincode",
- "serde",
- "sp1-primitives",
-]
-
-[[package]]
 name = "sp1-primitives"
 version = "4.0.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -4912,24 +4890,6 @@ dependencies = [
  "strum_macros",
  "sysinfo",
  "tracing",
-]
-
-[[package]]
-name = "sp1-zkvm"
-version = "4.0.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "f971db10d58b13c9a5d8cee4f7d1195d6f8a2debb9c33bd67f4eea5817432d42"
-dependencies = [
- "cfg-if",
- "getrandom",
- "lazy_static",
- "libm",
- "p3-baby-bear",
- "p3-field",
- "rand",
- "sha2",
- "sp1-lib",
- "sp1-primitives",
 ]
 
 [[package]]
