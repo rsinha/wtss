@@ -196,7 +196,7 @@ fn main() {
             &tss_vk_hash,
             prev_roster.subset_sign(
                 (0..prev_roster.signing_keys.len())
-                    .map(|_| rng.gen_bool(0.75))
+                    .map(|_| rng.gen_bool(0.85))
                     .collect::<Vec<bool>>()
                     .as_slice(),
                 &RAPS::rotation_message(&next_roster_hash, &tss_vk_hash),
