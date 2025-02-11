@@ -4,7 +4,7 @@ use std::path::{PathBuf, Path};
 
 fn main() {
     // Build the RAPS project
-    build_raps();
+    build_wraps();
 
     // Copy the ELF file to the OUT_DIR
     copy_elf();
@@ -12,7 +12,7 @@ fn main() {
 
 fn copy_elf() {
     // Define the source file (inside a folder, e.g., "binaries/my_binary")
-    let source = "./raps/target/elf-compilation/riscv32im-succinct-zkvm-elf/release/ab-rotation-program";
+    let source = "./succint-wraps/target/elf-compilation/riscv32im-succinct-zkvm-elf/release/ab-rotation-program";
 
     // Define the destination path (project root)
     let out_dir = env::var("OUT_DIR").expect("OUT_DIR not set");
@@ -23,9 +23,9 @@ fn copy_elf() {
 }
 
 
-fn build_raps() {
+fn build_wraps() {
     // Get the path to the nested directory relative to the root project
-    let nested_dir = PathBuf::from("raps");
+    let nested_dir = PathBuf::from("succint-wraps");
 
     // Get the current directory (where build.rs is located)
     let current_dir = env::current_dir().expect("Failed to get current directory");
