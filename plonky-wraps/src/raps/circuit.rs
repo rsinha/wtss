@@ -18,7 +18,7 @@ pub struct AttestationTargets {
 }
 
 impl Roster {
-    pub fn tree_height(&self) -> usize {
+    fn tree_height(&self) -> usize {
         self.0.leaves.len().trailing_zeros() as usize
     }
 

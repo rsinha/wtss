@@ -27,8 +27,8 @@ impl Roster {
     // Verify the plonky2 proof of the given nullifier (in the signal structure) and topic.
     pub fn verify_attestation(
         &self,
-        message: Digest,
-        attestation: Attestation,
+        message: &Digest,
+        attestation: &Attestation,
         verifier_data: &VerifierCircuitData<F, C, 2>,
     ) -> Result<()> {
         let public_inputs: Vec<F> = self
@@ -38,11 +38,11 @@ impl Roster {
             .iter()
             .flat_map(|h| h.elements)
             .chain(attestation.signature)
-            .chain(message)
+            .chain(message.clone())
             .collect();
 
         verifier_data.verify(ProofWithPublicInputs {
-            proof: attestation.proof,
+            proof: attestation.clone().proof,
             public_inputs,
         })
     }
@@ -50,17 +50,19 @@ impl Roster {
     // Generate the plonky2 proof for the given key pair and topic.
     pub fn produce_attestation(
         &self,
-        private_key: Digest,
-        message: Digest,
+        private_key: &Digest,
+        message: &Digest,
         public_key_index: usize,
     ) -> Result<(Attestation, VerifierCircuitData<F, C, 2>)> {
-        let signature = PoseidonHash::hash_no_pad(&[private_key, message].concat()).elements;
+        let signature = PoseidonHash::hash_no_pad(
+            &[private_key.clone(), message.clone()].concat()
+        ).elements;
         let config = CircuitConfig::standard_recursion_zk_config();
         let mut builder = CircuitBuilder::new(config);
         let mut pw = PartialWitness::new();
 
         let targets = self.attestation_circuit(&mut builder);
-        self.fill_attestation_targets(&mut pw, private_key, message, public_key_index, targets)?;
+        self.fill_attestation_targets(&mut pw, private_key.clone(), message.clone(), public_key_index, targets)?;
 
         let data = builder.build();
         let proof = data.prove(pw)?;
@@ -100,11 +102,11 @@ mod tests {
         let roster = Roster(MerkleTree::new(public_keys, 0));
 
         let i = 12;
-        let topic = F::rand_array();
+        let msg = F::rand_array();
 
         // generate the plonky2 proof for the given key
-        let (signal, vd) = roster.produce_attestation(private_keys[i], topic, i)?;
+        let (signal, vd) = roster.produce_attestation(&private_keys[i], &msg, i)?;
         // verify the plonky2 proof (contained in `signal`)
-        roster.verify_attestation(topic, signal, &vd)
+        roster.verify_attestation(&msg, &signal, &vd)
     }
 }
