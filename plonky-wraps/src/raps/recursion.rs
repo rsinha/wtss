@@ -7,7 +7,7 @@ use plonky2::plonk::proof::ProofWithPublicInputs;
 
 use crate::raps::roster::{Digest, PlonkyProof, Roster, Attestation, C, F};
 
-impl Roster {
+impl<const TREE_HEIGHT: usize> Roster<TREE_HEIGHT> {
     pub fn aggregate_attestations(
         &self,
         msg: Digest,
@@ -45,14 +45,20 @@ impl Roster {
                 },
             )?;
 
-            let vd_target = builder.add_virtual_verifier_data(attestation_circuit_verifier_data.common.config.fri_config.cap_height);
+            let vd_target = builder.add_virtual_verifier_data(
+                attestation_circuit_verifier_data.common.config.fri_config.cap_height
+            );
             pw.set_verifier_data_target(&vd_target, &attestation_circuit_verifier_data.verifier_only)?;
             pw.set_cap_target(
                 &vd_target.constants_sigmas_cap,
                 &attestation_circuit_verifier_data.verifier_only.constants_sigmas_cap,
             )?;
 
-            builder.verify_proof::<C>(&proof_target, &vd_target, &attestation_circuit_verifier_data.common);
+            builder.verify_proof::<C>(
+                &proof_target,
+                &vd_target,
+                &attestation_circuit_verifier_data.common
+            );
         }
 
         let data = builder.build();
@@ -83,7 +89,46 @@ mod tests {
     use plonky2::plonk::proof::ProofWithPublicInputs;
 
     use crate::raps::attestation_circuit::AttestationCircuit;
+    use crate::raps::aggregation_circuit::AggregationCircuit;
     use crate::raps::roster::{Roster, Digest, F};
+
+    #[test]
+    fn test_aggration_circuit() -> Result<()> {
+        let n = 1 << 10;
+        let active = 1 << 3;
+        let private_keys: Vec<Digest> = (0..n).map(|_| F::rand_array()).collect();
+        let public_keys: Vec<Vec<F>> = private_keys
+            .iter()
+            .map(|&sk| {
+                PoseidonHash::hash_no_pad(&[sk, [F::ZERO; 4]].concat())
+                    .elements
+                    .to_vec()
+            })
+            .collect();
+        let roster = Roster(MerkleTree::new(public_keys, 0));
+
+        let vd = AttestationCircuit::<10>::new().circuit_data.verifier_data();
+        let recursive_vd = AggregationCircuit::<10,8>::new().circuit_data.verifier_data();
+        println!("attestation circuit digest: {:?}", vd.verifier_only.circuit_digest);
+        println!("aggregation circuit digest: {:?}", recursive_vd.verifier_only.circuit_digest);
+
+        let msg = F::rand_array();
+
+        let mut attestations = Vec::new();
+        for i in 0..active {
+            let att = roster.produce_attestation(&private_keys[i], &msg, i)?;
+            roster.verify_attestation(&msg, &att)?;
+
+            attestations.push(att);
+        }
+
+        let circuit: AggregationCircuit<10,8> = AggregationCircuit::new();
+        let recursive_proof = circuit.prove(&roster, &msg, &attestations)?;
+
+        circuit.circuit_data.verify(recursive_proof)?;
+        Ok(())
+    }
+
 
     #[test]
     fn test_recursion_set() -> Result<()> {
@@ -98,7 +143,7 @@ mod tests {
                     .to_vec()
             })
             .collect();
-        let roster = Roster(MerkleTree::new(public_keys, 0));
+        let roster = Roster::<10>(MerkleTree::new(public_keys, 0));
 
         let msg = F::rand_array();
         let mut attestations = Vec::new();

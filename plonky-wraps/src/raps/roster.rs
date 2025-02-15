@@ -20,9 +20,9 @@ pub struct Attestation {
     pub proof: PlonkyProof,
 }
 
-pub struct Roster(pub MerkleTree<F, PoseidonHash>);
+pub struct Roster<const TREE_HEIGHT: usize>(pub MerkleTree<F, PoseidonHash>);
 
-impl Roster {
+impl<const TREE_HEIGHT: usize> Roster<TREE_HEIGHT> {
     // Verify the plonky2 proof of the given nullifier (in the signal structure) and topic.
     pub fn verify_attestation(
         &self,
@@ -39,7 +39,7 @@ impl Roster {
             .chain(message.clone())
             .collect();
 
-        AttestationCircuit::<10>::new()
+        AttestationCircuit::<TREE_HEIGHT>::new()
             .circuit_data
             .verifier_data()
             .verify(ProofWithPublicInputs {
@@ -59,7 +59,7 @@ impl Roster {
             &[private_key.clone(), message.clone()].concat()
         ).elements;
 
-        let circuit: AttestationCircuit<10> = AttestationCircuit::new();
+        let circuit: AttestationCircuit<TREE_HEIGHT> = AttestationCircuit::new();
         let proof = circuit.prove(&self, private_key, message, public_key_index)?;
 
         Ok( Attestation { signature, proof: proof.proof, } )
@@ -78,7 +78,7 @@ mod tests {
 
     #[test]
     fn test_attestation() -> Result<()> {
-        let n = 1 << 20;
+        let n = 1 << 10;
         let private_keys: Vec<Digest> = (0..n).map(|_| F::rand_array()).collect();
         let public_keys: Vec<Vec<F>> = private_keys
             .iter()
@@ -88,7 +88,7 @@ mod tests {
                     .to_vec()
             })
             .collect();
-        let roster = Roster(MerkleTree::new(public_keys, 0));
+        let roster = Roster::<10>(MerkleTree::new(public_keys, 0));
 
         let i = 12;
         let msg = F::rand_array();

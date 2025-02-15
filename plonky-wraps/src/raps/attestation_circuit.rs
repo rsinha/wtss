@@ -81,7 +81,7 @@ impl<const TREE_HEIGHT: usize> AttestationCircuit<TREE_HEIGHT> {
 
     pub fn prove(
         &self,
-        roster: &Roster, 
+        roster: &Roster<TREE_HEIGHT>, 
         private_key: &Digest,
         topic: &Digest,
         public_key_index: usize
@@ -95,54 +95,15 @@ impl<const TREE_HEIGHT: usize> AttestationCircuit<TREE_HEIGHT> {
 
         let merkle_proof = roster.0.prove(public_key_index);
         for (ht, h) in self.targets.merkle_proof
-            .siblings.clone()
+            .siblings
+            .as_slice()
             .into_iter()
             .zip(merkle_proof.siblings)
         {
-            pw.set_hash_target(ht, h)?;
+            pw.set_hash_target(*ht, h)?;
         }
 
         self.circuit_data.prove(pw)
 
-    }
-}
-
-impl Roster {
-
-    // Fill the semaphore targets that we defined at the method `semaphore_circuit` with the given
-    // values.
-    pub fn fill_attestation_targets(
-        &self,
-        pw: &mut PartialWitness<F>,
-        private_key: Digest,
-        topic: Digest,
-        public_key_index: usize,
-        targets: AttestationTargets,
-    ) -> Result<()> {
-        let AttestationTargets {
-            merkle_root,
-            message: topic_target,
-            merkle_proof: merkle_proof_target,
-            private_key: private_key_target,
-            public_key_index: public_key_index_target,
-        } = targets;
-
-        pw.set_hash_target(merkle_root, self.0.cap.0[0])?;
-        pw.set_target_arr(&private_key_target, &private_key)?;
-        pw.set_target_arr(&topic_target, &topic)?;
-        pw.set_target(
-            public_key_index_target,
-            F::from_canonical_usize(public_key_index),
-        )?;
-
-        let merkle_proof = self.0.prove(public_key_index);
-        for (ht, h) in merkle_proof_target
-            .siblings
-            .into_iter()
-            .zip(merkle_proof.siblings)
-        {
-            pw.set_hash_target(ht, h)?;
-        }
-        Ok(())
     }
 }
