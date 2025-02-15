@@ -1,3 +1,3 @@
 pub mod roster;
-pub mod circuit;
+pub mod attestation_circuit;
 pub mod recursion;
