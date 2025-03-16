@@ -1,8 +1,10 @@
 use ab_rotation_lib::{
     address_book::{AddressBook, Signatures},
     ed25519::{Signature, SigningKey, VerifyingKey, ENTROPY_SIZE},
+    sha256::*,
     statement::Statement,
     PublicValuesStruct,
+    errors::*,
 };
 use alloy_sol_types::SolType;
 use sp1_sdk::{
@@ -26,9 +28,9 @@ impl RAPS {
         vk.verify(message, signature)
     }
 
-    pub fn rotation_message(ab_next: &AddressBook, tss_vk: impl AsRef<[u8]>) -> Vec<u8> {
-        let ab_next_hash = ab_rotation_lib::address_book::serialize_and_digest_sha256(&ab_next);
-        let tss_vk_hash: [u8; 32] = ab_rotation_lib::sha256::digest_sha256(tss_vk.as_ref());
+    pub fn rotation_message(ab_next: &AddressBook, tss_vk: impl AsRef<[u8]>) -> Result<Vec<u8>, RAPSError> {
+        let ab_next_hash = ab_rotation_lib::address_book::serialize_and_digest_sha256(&ab_next)?;
+        let tss_vk_hash: [u8; HASH_LENGTH] = ab_rotation_lib::sha256::digest_sha256(tss_vk.as_ref());
 
         let message = [ab_next_hash.as_slice(), tss_vk_hash.as_slice()]
             .into_iter()
@@ -36,7 +38,7 @@ impl RAPS {
             .copied()
             .collect::<Vec<_>>();
 
-        message
+        Ok(message)
     }
 
     pub fn proof_setup(zkvm_elf: &[u8]) -> (SP1ProvingKey, SP1VerifyingKey) {
@@ -54,13 +56,13 @@ impl RAPS {
     pub fn construct_rotation_proof(
         pk: &SP1ProvingKey,                           // proving key output by sp1 setup
         vk: &SP1VerifyingKey,                         // verifying key output by sp1 setup
-        ab_genesis_hash: &[u8; 32],                   // genesis AddressBook hash
+        ab_genesis_hash: &[u8; HASH_LENGTH],          // genesis AddressBook hash
         ab_curr: &AddressBook,                        // current AddressBook
         ab_next: &AddressBook,                        // next AddressBook
         prev_proof: Option<SP1ProofWithPublicValues>, // the previous proof
-        tss_vk_hash: &[u8; 32], // TSS verification key for the next AddressBook
-        signatures: &Signatures, // signatures attesting the next AddressBook
-    ) -> SP1ProofWithPublicValues {
+        tss_vk_hash: &[u8; HASH_LENGTH],              // TSS verification key for the next AddressBook
+        signatures: &Signatures,                      // signatures attesting the next AddressBook
+    ) -> Result<SP1ProofWithPublicValues, RAPSError> {
         // Setup the prover client.
         let prover = ProverClient::builder().cpu().build();
 
@@ -72,20 +74,18 @@ impl RAPS {
             ab_next,
             signatures,
             *tss_vk_hash,
-        );
+        )?;
 
-        // Setup the inputs.
+        // Supply the statement and (optional) prev proof to the zkVM
         let mut stdin = SP1Stdin::new();
         stdin.write(&stmt);
         if ab_curr_hash != *ab_genesis_hash {
-            stdin.write_proof(
-                *prev_proof
-                    .expect("expected previous proof")
-                    .proof
-                    .try_as_compressed()
-                    .unwrap(),
-                vk.vk.clone(),
-            );
+            let box_proof_inner = prev_proof
+                .map(|p| p.proof.try_as_compressed())
+                .flatten()
+                .ok_or(RAPSError::InvalidInput("expected previous proof after genesis".to_string()))?;
+
+            stdin.write_proof(*box_proof_inner, vk.vk.clone());
         }
 
         // Generate the proofs
@@ -93,9 +93,9 @@ impl RAPS {
             .prove(pk, &stdin)
             .compressed()
             .run()
-            .expect("failed to generate proof");
+            .map_err(|_| RAPSError::ProverError)?;
 
-        proof
+        Ok(proof)
     }
 
     pub fn verify_proof(vk: &SP1VerifyingKey, proof: &SP1ProofWithPublicValues) -> bool {
@@ -110,8 +110,10 @@ impl RAPS {
 
         //parse the proof and check whether vk_digest matches
         let parsed_vk_digest = {
-            let parsed_prev_proof =
-                PublicValuesStruct::abi_decode(&proof.public_values.to_vec(), true).unwrap();
+            let parsed_prev_proof= match PublicValuesStruct::abi_decode(&proof.public_values.to_vec(), true) {
+                Ok(val) => val,
+                Err(_) => return false
+            };
             parsed_prev_proof.vk_digest.0
         };
 
@@ -124,28 +126,23 @@ impl RAPS {
 }
 
 fn generate_statement(
-    ab_genesis_hash: [u8; 32],
+    ab_genesis_hash: [u8; HASH_LENGTH],
     prev_proof: Option<&SP1ProofWithPublicValues>,
     vk_digest: [u32; 8],
     ab_curr: &AddressBook,
     ab_next: &AddressBook,
     signatures: &Signatures,
-    tss_vk_next_hash: [u8; 32],
-) -> ([u8; 32], [u8; 32], Statement) {
-    let ab_curr_hash = ab_rotation_lib::address_book::serialize_and_digest_sha256(&ab_curr);
-    let ab_next_hash = ab_rotation_lib::address_book::serialize_and_digest_sha256(&ab_next);
+    tss_vk_next_hash: [u8; HASH_LENGTH],
+) -> Result<([u8; HASH_LENGTH], [u8; HASH_LENGTH], Statement), RAPSError> {
+    let ab_curr_hash = ab_rotation_lib::address_book::serialize_and_digest_sha256(&ab_curr)?;
+    let ab_next_hash = ab_rotation_lib::address_book::serialize_and_digest_sha256(&ab_next)?;
 
-    let ab_prev_hash = prev_proof.map(|prev_proof| {
-        let parsed_prev_proof =
-            PublicValuesStruct::abi_decode(&prev_proof.public_values.to_vec(), true).unwrap();
-        parsed_prev_proof.ab_curr_hash.0
-    });
+    let prev_proof_pub_values = prev_proof
+        .map(|p| { PublicValuesStruct::abi_decode(&p.public_values.to_vec(), true)})
+        .and_then(|p| p.ok());
 
-    let tss_vk_prev_hash = prev_proof.map(|prev_proof| {
-        let parsed_prev_proof =
-            PublicValuesStruct::abi_decode(&prev_proof.public_values.to_vec(), true).unwrap();
-        parsed_prev_proof.tss_vk_hash.0
-    });
+    let ab_prev_hash = prev_proof_pub_values.as_ref().map(|p| p.ab_curr_hash.0);
+    let tss_vk_prev_hash = prev_proof_pub_values.as_ref().map(|p| p.tss_vk_hash.0);
 
     let statement = Statement {
         vk_digest,
@@ -158,17 +155,16 @@ fn generate_statement(
         signatures: signatures.clone(),
     };
 
-    (ab_curr_hash, ab_next_hash, statement)
+    Ok((ab_curr_hash, ab_next_hash, statement))
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
     use smallvec::ToSmallVec;
-    use sp1_sdk::include_elf;
 
     /// The ELF (executable and linkable format) file for the Succinct RISC-V zkVM.
-    pub const AB_ROTATION_ELF: &[u8] = include_elf!("ab-rotation-program");
+    pub const AB_ROTATION_ELF: &[u8] = include_bytes!("../../../resources/ab-rotation-program");
 
     #[test]
     fn run_simulation() {
@@ -185,11 +181,11 @@ mod tests {
         let genesis_signatures = subset_sign(
             &genesis_signing_keys,
             &[true; 5],
-            &RAPS::rotation_message(&ab_genesis, [0u8; 32]),
+            &RAPS::rotation_message(&ab_genesis, [0u8; 32]).unwrap(), // safe for the test
         );
 
         let ab_genesis_hash =
-            ab_rotation_lib::address_book::serialize_and_digest_sha256(&ab_genesis);
+            ab_rotation_lib::address_book::serialize_and_digest_sha256(&ab_genesis).unwrap(); // safe for the test
         let genesis_proof = RAPS::construct_rotation_proof(
             &pk,
             &vk,
@@ -199,7 +195,7 @@ mod tests {
             None,
             &[0u8; 32],
             &Signatures(genesis_signatures.to_smallvec()),
-        );
+        ).unwrap(); // safe for the test
 
         let mut prev_ab = ab_genesis;
         let mut prev_proof = genesis_proof;
@@ -223,7 +219,7 @@ mod tests {
             let signatures = subset_sign(
                 &prev_signing_keys,
                 &[true; 5],
-                &RAPS::rotation_message(&next_ab, [0u8; 32]),
+                &RAPS::rotation_message(&next_ab, [0u8; 32]).unwrap(), // safe for the test
             );
 
             let next_proof = RAPS::construct_rotation_proof(
@@ -235,7 +231,7 @@ mod tests {
                 Some(prev_proof),
                 &[0u8; 32],
                 &Signatures(signatures.to_smallvec()),
-            );
+            ).unwrap(); // safe for the test
 
             prev_proof = next_proof;
             prev_ab = next_ab;
@@ -263,7 +259,7 @@ mod tests {
 
     fn debug(proof: &SP1ProofWithPublicValues) {
         let parsed_proof =
-            PublicValuesStruct::abi_decode(&proof.public_values.to_vec(), true).unwrap();
+            PublicValuesStruct::abi_decode(&proof.public_values.to_vec(), true).unwrap(); // safe for the test
         println!("------------ BEGIN Roster Attestation Proof ------------");
         println!(
             "ab_genesis_hash: 0x{}",
