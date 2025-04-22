@@ -1,7 +1,7 @@
 [workspace]
 members = [
     "common",
-    "zkvm_program",
+    "raps_zkvm_program",
     "raps",
 ]
 resolver = "2"
