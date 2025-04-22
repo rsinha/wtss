@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: Apache-2.0
+
 use ab_rotation_lib::{
     address_book::{AddressBook, Signatures},
     ed25519::{Signature, SigningKey, VerifyingKey, ENTROPY_SIZE},
@@ -138,8 +140,9 @@ fn generate_statement(
     let ab_next_hash = ab_rotation_lib::address_book::serialize_and_digest_sha256(&ab_next)?;
 
     let prev_proof_pub_values = prev_proof
-        .map(|p| { PublicValuesStruct::abi_decode(&p.public_values.to_vec(), true)})
-        .and_then(|p| p.ok());
+        .map(|p| { PublicValuesStruct::abi_decode(&p.public_values.to_vec(), true) })
+        .transpose()
+        .map_err(|_| RAPSError::InvalidInput(("error decoding previous proof").to_string()))?;
 
     let ab_prev_hash = prev_proof_pub_values.as_ref().map(|p| p.ab_curr_hash.0);
     let tss_vk_prev_hash = prev_proof_pub_values.as_ref().map(|p| p.tss_vk_hash.0);
@@ -164,7 +167,7 @@ mod tests {
     use smallvec::ToSmallVec;
 
     /// The ELF (executable and linkable format) file for the Succinct RISC-V zkVM.
-    pub const AB_ROTATION_ELF: &[u8] = include_bytes!("../../../resources/ab-rotation-program");
+    pub const AB_ROTATION_ELF: &[u8] = include_bytes!("../../target/elf-compilation/riscv32im-succinct-zkvm-elf/release/ab-rotation-program");
 
     #[test]
     fn run_simulation() {

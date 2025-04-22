@@ -34,7 +34,7 @@ impl ByteRAPS {
 
     pub fn compute_address_book_hash(verifying_keys: Vec<impl AsRef<[u8]>>, weights: Vec<u64>) -> [u8; 32] {
         let ab = build_address_book(verifying_keys, weights);
-        ab_rotation_lib::address_book::serialize_and_digest_sha256(&ab)
+        ab_rotation_lib::address_book::serialize_and_digest_sha256(&ab).unwrap()
     }
 
     pub fn compute_tss_vk_hash(tss_vk: impl AsRef<[u8]>) -> [u8; 32] {
@@ -99,7 +99,7 @@ impl ByteRAPS {
             prev_proof,
             tss_vk_hash,
             &signatures,
-        );
+        ).unwrap();
 
         let mut proof_buf: Vec<u8> = Vec::new();
         bincode::serialize_into(&mut proof_buf, &proof).expect("failed to serialize proof");
@@ -135,7 +135,7 @@ fn build_address_book(verifying_keys: Vec<impl AsRef<[u8]>>, weights: Vec<u64>) 
 #[cfg(test)]
 mod tests {
     /// The ELF (executable and linkable format) file for the Succinct RISC-V zkVM.
-    pub const AB_ROTATION_ELF: &[u8] = sp1_sdk::include_elf!("ab-rotation-program");
+    pub const AB_ROTATION_ELF: &[u8] = include_bytes!("../../target/elf-compilation/riscv32im-succinct-zkvm-elf/release/ab-rotation-program");
 
     #[derive(Debug, Clone)]
     pub struct Roster {

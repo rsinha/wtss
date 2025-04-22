@@ -845,19 +845,11 @@ mod tests {
         let π = HinTS::aggregate(&crs, &ak, &vk, &sigs);
 
         // test (de)-serialization
-        let vk_ser_time = std::time::Instant::now();
         let serialized_vk = serialize(&vk);
-        println!("vk serialization time: {:?}", vk_ser_time.elapsed());
-        let vk_deser_time = std::time::Instant::now();
         let deserialized_vk = deserialize::<VerificationKey>(&serialized_vk);
-        println!("vk deserialization time: {:?}", vk_deser_time.elapsed());
 
-        let ak_ser_time = std::time::Instant::now();
         let serialized_ak = serialize(&ak);
-        println!("ak serialization time: {:?}", ak_ser_time.elapsed());
-        let ak_deser_time = std::time::Instant::now();
         let deserialized_ak = deserialize::<AggregationKey>(&serialized_ak);
-        println!("ak deserialization time: {:?}", ak_deser_time.elapsed());
 
         let serialized_π = serialize(&π);
         let deserialized_π = deserialize::<ThresholdSignature>(&serialized_π);
@@ -868,19 +860,11 @@ mod tests {
         let serialized_pk = serialize(&epks[0].pk_i);
         let deserialized_pk = deserialize::<PublicKey>(&serialized_pk);
 
-        let epk_ser_time = std::time::Instant::now();
         let serialized_epk = serialize(&epks[0]);
-        println!("epk serialization time: {:?}", epk_ser_time.elapsed());
-        let epk_deser_time = std::time::Instant::now();
         let deserialized_epk = deserialize::<ExtendedPublicKey>(&serialized_epk);
-        println!("epk deserialization time: {:?}", epk_deser_time.elapsed());
 
-        let crs_ser_time = std::time::Instant::now();
         let serialized_crs = serialize(&crs);
-        println!("crs serialization time: {:?}", crs_ser_time.elapsed());
-        let crs_deser_time = std::time::Instant::now();
         let deserialized_crs = deserialize::<CRS>(&serialized_crs);
-        println!("crs deserialization time: {:?}", crs_deser_time.elapsed());
 
         assert_eq!(vk, deserialized_vk);
         assert_eq!(ak, deserialized_ak);
@@ -909,9 +893,7 @@ mod tests {
         let (crs, ak, vk, sks, _) = sample_universe(universe_n);
         let sigs = sample_signing(num_signers, msg, &sks);
 
-        let aggregation_time = std::time::Instant::now();
         let π = HinTS::aggregate(&crs, &ak, &vk, &sigs);
-        println!("aggregation time: {:?}", aggregation_time.elapsed());
 
         let threshold = (F::from(1), F::from(3)); // 1/3
         assert!(HinTS::verify(msg, &vk, &π, threshold));
