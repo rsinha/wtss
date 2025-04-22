@@ -60,7 +60,7 @@ fn sample_universe(
     // -------------- sample one-time SRS ---------------
     let init_crs = HinTS_setup::PowersOfTauProtocol::init(n);
     // WARN: supply a random seed, not a fixed one as shown here.
-    let (crs, proof) = HinTS_setup::PowersOfTauProtocol::contribute(&init_crs, [86u8; 32]);
+    let (crs, proof) = HinTS_setup::PowersOfTauProtocol::contribute(&init_crs, [86u8; 32]).unwrap();
     assert!(HinTS_setup::PowersOfTauProtocol::verify_contribution(
         &init_crs, &crs, &proof
     ));
@@ -71,7 +71,7 @@ fn sample_universe(
     let sks: Vec<HinTS::SecretKey> = (0..num_signers).map(|_| HinTS_scheme::keygen([42u8; 32])).collect();
 
     let epks = (0..num_signers)
-        .map(|i| HinTS_scheme::hint_gen(&crs, n, i, &sks[i]))
+        .map(|i| HinTS_scheme::hint_gen(&crs, n, i, &sks[i]).unwrap())
         .collect::<Vec<HinTS::ExtendedPublicKey>>();
 
     //sample random weights for each party
@@ -83,7 +83,7 @@ fn sample_universe(
         .collect();
 
     //run universe setup
-    let (vk, ak) = HinTS_scheme::preprocess(n, &crs, &signers_info);
+    let (vk, ak) = HinTS_scheme::preprocess(n, &crs, &signers_info).unwrap();
 
     (crs, ak, vk, sks, epks)
 }
@@ -91,7 +91,7 @@ fn sample_universe(
 fn sample_weights(n: usize) -> Vec<HinTS::Weight> {
     let mut csprng = rand::rngs::OsRng;
     (0..n)
-        .map(|_| HinTS::weight(csprng.gen_range(5..8)))
+        .map(|_| HinTS::Weight::from(csprng.gen_range(5..8)))
         .collect()
 }
 
@@ -112,7 +112,7 @@ fn sample_signing(
     let mut sigs = HashMap::new();
     bitmap.iter().enumerate().for_each(|(i, &active)| {
         if active {
-            sigs.insert(i, HinTS_scheme::sign(msg, &sks[i]));
+            sigs.insert(i, HinTS_scheme::sign(msg, &sks[i]).unwrap());
         }
     });
 
@@ -176,7 +176,7 @@ fn main() {
 
         // compute HinTS verification key
         let (tss_crs, tss_ak, tss_vk, tss_sks, _) = sample_universe(32);
-        let tss_vk_hash = RAPS::compute_tss_vk_hash(&HinTS::serialize(&tss_vk));
+        let tss_vk_hash = RAPS::compute_tss_vk_hash(&HinTS::serialize(&tss_vk).unwrap());
 
         // perform AB rotation
         let prover_time = std::time::Instant::now();
@@ -212,13 +212,16 @@ fn main() {
             &tss_ak,
             &tss_vk,
             &sample_signing(31, &platform_state_root, &tss_sks, 0.75)
-        );
+        ).unwrap();
+
+        let hints_vk_serialized = HinTS::serialize(&tss_vk).unwrap();
+        let hints_proof_serialized = HinTS::serialize(&hints_proof).unwrap();
 
         assert!(verify_combined_proof(
             &platform_state_root,
-            &HinTS::serialize(&hints_proof),
+            &hints_proof_serialized,
             &next_proof,
-            &HinTS::serialize(&tss_vk),
+            &hints_vk_serialized,
             &vk,
         ));
 
@@ -238,5 +241,5 @@ fn verify_combined_proof(
     let hints_vk = HinTS::deserialize::<HinTS::VerificationKey>(hints_vk_encoded);
 
     RAPS::verify_proof(raps_vk_encoded, raps_proof_encoded) &&
-    HinTS_scheme::verify(msg, &hints_vk, &hints_proof, (F::from(1), F::from(3)))
+    HinTS_scheme::verify(msg, &hints_vk, &hints_proof, (F::from(1), F::from(3))).unwrap()
 }
