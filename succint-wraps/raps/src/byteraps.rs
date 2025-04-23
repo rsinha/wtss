@@ -114,6 +114,42 @@ impl ByteRAPS {
         RAPS::verify_proof(&vk, &proof)
     }
 
+    pub fn verify_compressed_proof(vk: impl AsRef<[u8]>, proof: impl AsRef<[u8]>) -> bool {
+        let vk: SP1VerifyingKey = bincode::deserialize(vk.as_ref()).expect("failed to deserialize vk");
+        let proof: SP1ProofWithPublicValues =
+            bincode::deserialize(proof.as_ref()).expect("failed to deserialize proof");
+        RAPS::verify_compressed_proof(&vk, &proof)
+    }
+
+    pub fn compress_rotation_proof(
+        compression_pk: impl AsRef<[u8]>,    // proving key output by sp1 setup for compression zkVM
+        raps_vk: impl AsRef<[u8]>,           // verifying key output by sp1 setup for RAPS zkVM
+        ab_genesis_hash: &[u8; 32],          // genesis AddressBook hash
+        ab_current_hash: &[u8; 32],          // current AddressBook hash
+        ab_next_hash: &[u8; 32],             // next AddressBook hash
+        tss_vk_hash: &[u8; 32],              // TSS verification key for the next AddressBook
+        proof: impl AsRef<[u8]>,             // the proof to compress
+    ) -> Vec<u8> {
+        let compression_pk: SP1ProvingKey = bincode::deserialize(compression_pk.as_ref()).expect("failed to deserialize pk");
+        let raps_vk: SP1VerifyingKey = bincode::deserialize(raps_vk.as_ref()).expect("failed to deserialize vk");
+        let proof: SP1ProofWithPublicValues = bincode::deserialize(proof.as_ref()).expect("failed to deserialize prev_proof");
+
+        let compressed_proof = RAPS::compress_rotation_proof(
+            &compression_pk,
+            &raps_vk,
+            ab_genesis_hash,
+            ab_current_hash,
+            ab_next_hash,
+            tss_vk_hash,
+            proof,
+        ).expect("failed to compress proof");
+
+        let mut compressed_proof_buf: Vec<u8> = Vec::new();
+        bincode::serialize_into(&mut compressed_proof_buf, &compressed_proof).expect("failed to serialize proof");
+
+        compressed_proof_buf
+    }
+
     pub fn tss_vk_hash_from_proof(proof: impl AsRef<[u8]>) -> [u8; 32] {
         let proof: SP1ProofWithPublicValues =
             bincode::deserialize(proof.as_ref()).expect("failed to deserialize proof");

@@ -3048,6 +3048,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "raps-compression-program"
+version = "0.1.0"
+dependencies = [
+ "ab-rotation-lib",
+ "alloy-sol-types",
+ "sp1-zkvm",
+]
+
+[[package]]
 name = "rayon"
 version = "1.10.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"

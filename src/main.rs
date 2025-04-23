@@ -119,16 +119,25 @@ fn sample_signing(
     sigs
 }
 
-fn main() {
-    let mut rng = rand::thread_rng();
-
+fn load_elf(elf_name: &'static str) -> Vec<u8> {
     let out_dir = std::env::var("OUT_DIR").expect("OUT_DIR not set");
-    let file_path = std::path::Path::new(&out_dir).join("ab-rotation-program");
+    let file_path = std::path::Path::new(&out_dir).join(elf_name);
 
     // Setup the program.
     println!("Loading elf file from {:?}", file_path);
     let elf = std::fs::read(file_path).expect("Unable to read elf file");
-    let (pk, vk) = RAPS::proof_setup(elf);
+
+    elf
+}
+
+fn main() {
+    let mut rng = rand::thread_rng();
+
+    let raps_elf = load_elf("ab-rotation-program");
+    let compression_elf = load_elf("raps-compression-program");
+
+    let (pk, vk) = RAPS::proof_setup(raps_elf);
+    let (compression_pk, compression_vk) = RAPS::proof_setup(compression_elf);
 
     // AB 0 (genesis AB)
     let genesis_committee = Roster::new(5);
@@ -173,6 +182,10 @@ fn main() {
             next_roster.verifying_keys.clone(),
             next_roster.weights.clone(),
         );
+        let prev_roster_hash = RAPS::compute_address_book_hash(
+            prev_roster.verifying_keys.clone(),
+            prev_roster.weights.clone(),
+        );
 
         // compute HinTS verification key
         let (tss_crs, tss_ak, tss_vk, tss_sks, _) = sample_universe(32);
@@ -203,6 +216,29 @@ fn main() {
             ),
         );
         println!("Prover time: {:?}", prover_time.elapsed());
+        println!("Proof size: {}", next_proof.len());
+
+        // let us compress the above proof
+        let prover_time = std::time::Instant::now();
+        let compressed_proof = RAPS::compress_rotation_proof(
+            &compression_pk,
+            &vk,
+            &genesis_ab_hash,
+            &prev_roster_hash,
+            &next_roster_hash,
+            &tss_vk_hash,
+            &next_proof
+        );
+        println!("Compression time: {:?}", prover_time.elapsed());
+        println!("Compressed proof size: {}", compressed_proof.len());
+
+        // verify the compressed proof
+        let verifier_time = std::time::Instant::now();
+        assert!(RAPS::verify_compressed_proof(
+            &compression_vk,
+            &compressed_proof
+        ));
+        println!("Verifier time for compressed proof: {:?}", verifier_time.elapsed());
 
         // generate a HinTS proof
         let platform_state_root = [0u8; 48];
@@ -240,6 +276,13 @@ fn verify_combined_proof(
     let hints_proof = HinTS::deserialize::<HinTS::ThresholdSignature>(hints_proof_encoded);
     let hints_vk = HinTS::deserialize::<HinTS::VerificationKey>(hints_vk_encoded);
 
-    RAPS::verify_proof(raps_vk_encoded, raps_proof_encoded) &&
-    HinTS_scheme::verify(msg, &hints_vk, &hints_proof, (F::from(1), F::from(3))).unwrap()
+    let verifier_time = std::time::Instant::now();
+    let wraps_result = RAPS::verify_proof(raps_vk_encoded, raps_proof_encoded);
+    println!("Verifier time for RAPS proof: {:?}", verifier_time.elapsed());
+
+    let verifier_time = std::time::Instant::now();
+    let hints_result = HinTS_scheme::verify(msg, &hints_vk, &hints_proof, (F::from(1), F::from(3))).unwrap();
+    println!("Verifier time for HinTS proof: {:?}", verifier_time.elapsed());
+
+    wraps_result && hints_result
 }

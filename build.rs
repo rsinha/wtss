@@ -11,14 +11,15 @@ fn main() {
 }
 
 fn copy_elf() {
-    // Define the source file (inside a folder, e.g., "binaries/my_binary")
-    let source = "./succint-wraps/target/elf-compilation/riscv32im-succinct-zkvm-elf/release/ab-rotation-program";
-
     // Define the destination path (project root)
     let out_dir = env::var("OUT_DIR").expect("OUT_DIR not set");
-    let destination = Path::new(&out_dir).join("ab-rotation-program");
 
-    // Copy the binary file
+    let source = "./succint-wraps/target/elf-compilation/riscv32im-succinct-zkvm-elf/release/ab-rotation-program";
+    let destination = Path::new(&out_dir).join("ab-rotation-program");
+    fs::copy(source, &destination).expect("Failed to copy binary");
+
+    let source = "./succint-wraps/target/elf-compilation/riscv32im-succinct-zkvm-elf/release/raps-compression-program";
+    let destination = Path::new(&out_dir).join("raps-compression-program");
     fs::copy(source, &destination).expect("Failed to copy binary");
 }
 

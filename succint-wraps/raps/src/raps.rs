@@ -4,7 +4,7 @@ use ab_rotation_lib::{
     address_book::{AddressBook, Signatures},
     ed25519::{Signature, SigningKey, VerifyingKey, ENTROPY_SIZE},
     sha256::*,
-    statement::Statement,
+    statement::{Statement, CompressedStatement},
     PublicValuesStruct,
     errors::*,
 };
@@ -122,6 +122,54 @@ impl RAPS {
         if parsed_vk_digest != vk_digest {
             return false;
         }
+
+        verification.is_ok()
+    }
+
+    pub fn compress_rotation_proof(
+        compression_pk: &SP1ProvingKey,               // proving key output by sp1 setup for compression zkVM
+        raps_vk: &SP1VerifyingKey,                    // verifying key output by sp1 setup for RAPS zkVM
+        ab_genesis_hash: &[u8; HASH_LENGTH],          // genesis AddressBook hash
+        ab_current_hash: &[u8; HASH_LENGTH],          // current AddressBook hash
+        ab_next_hash: &[u8; HASH_LENGTH],          // current AddressBook hash
+        tss_vk_hash: &[u8; HASH_LENGTH],              // TSS verification key for the next AddressBook
+        proof: SP1ProofWithPublicValues,             // the proof to compress
+    ) -> Result<SP1ProofWithPublicValues, RAPSError>{
+        let prover = ProverClient::builder().cpu().build();
+
+        let statement = CompressedStatement {
+            vk_digest: raps_vk.hash_u32(),
+            ab_genesis_hash: ab_genesis_hash.clone(),
+            ab_current_hash: ab_current_hash.clone(),
+            ab_next_hash: ab_next_hash.clone(),
+            tss_vk_current_hash: tss_vk_hash.clone(),
+        };
+
+        // Supply the statement and (optional) prev proof to the zkVM
+        let mut stdin = SP1Stdin::new();
+        stdin.write(&statement);
+
+        let box_proof_inner = proof
+            .proof
+            .try_as_compressed()
+            .ok_or(RAPSError::InvalidInput("expected valid proof to compress".to_string()))?;
+
+        stdin.write_proof(*box_proof_inner, raps_vk.vk.clone());
+
+        // Generate the proofs
+        let compressed_proof: SP1ProofWithPublicValues = prover
+            .prove(compression_pk, &stdin)
+            .plonk()
+            .run()
+            .map_err(|_| RAPSError::ProverError)?;
+
+        Ok(compressed_proof)
+    }
+
+    pub fn verify_compressed_proof(compression_vk: &SP1VerifyingKey, compressed_proof: &SP1ProofWithPublicValues) -> bool {
+        // Setup the prover client.
+        let client = ProverClient::builder().cpu().build();
+        let verification = client.verify(compressed_proof, compression_vk);
 
         verification.is_ok()
     }
