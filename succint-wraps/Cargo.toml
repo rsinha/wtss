@@ -22,6 +22,7 @@ smallvec = { version = "1.13", features = ["const_generics", "serde"] }
 sp1-sdk = { version = "4.1.0", default-features = false, features = ["native-gnark"] }
 sp1-zkvm = { version = "4.1.0" }
 sp1-helper = { version = "4.1.0" }
+sp1-verifier = { version = "4.1.0" }
 rand_chacha = { version = "^0.3.0" }
 
 # Re-imported our own

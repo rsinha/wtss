@@ -41,6 +41,12 @@ impl ByteRAPS {
         ab_rotation_lib::sha256::digest_sha256(tss_vk)
     }
 
+    pub fn extract_vk_digest(vk: impl AsRef<[u8]>) -> Vec<u8> {
+        let vk: SP1VerifyingKey = bincode::deserialize(vk.as_ref()).expect("failed to deserialize vk");
+        let vk_digest = RAPS::extract_vk_digest(&vk);
+        vk_digest.as_bytes().to_owned()
+    }
+
     pub fn rotation_message(ab_hash: &[u8; 32], tss_vk_hash: &[u8; 32]) -> Vec<u8> {
         let message = [ab_hash.as_slice(), tss_vk_hash.as_slice()]
             .into_iter()
@@ -90,7 +96,7 @@ impl ByteRAPS {
                 .collect(),
         ));
 
-        let proof = RAPS::construct_rotation_proof(
+        let proof = RAPS::construct_uncompressed_proof(
             &pk,
             &vk,
             ab_genesis_hash,
@@ -107,18 +113,19 @@ impl ByteRAPS {
         proof_buf
     }
 
-    pub fn verify_proof(vk: impl AsRef<[u8]>, proof: impl AsRef<[u8]>) -> bool {
+    pub fn verify_uncompressed_proof(vk: impl AsRef<[u8]>, proof: impl AsRef<[u8]>) -> bool {
         let vk: SP1VerifyingKey = bincode::deserialize(vk.as_ref()).expect("failed to deserialize vk");
         let proof: SP1ProofWithPublicValues =
             bincode::deserialize(proof.as_ref()).expect("failed to deserialize proof");
-        RAPS::verify_proof(&vk, &proof)
+        RAPS::verify_uncompressed_proof(&vk, &proof)
     }
 
-    pub fn verify_compressed_proof(vk: impl AsRef<[u8]>, proof: impl AsRef<[u8]>) -> bool {
-        let vk: SP1VerifyingKey = bincode::deserialize(vk.as_ref()).expect("failed to deserialize vk");
+    pub fn verify_compressed_proof(vk_digest: impl AsRef<[u8]>, proof: impl AsRef<[u8]>) -> bool {
+        let vk_digest = String::from_utf8(vk_digest.as_ref().to_vec())
+            .expect("failed to convert vk_digest to String");
         let proof: SP1ProofWithPublicValues =
             bincode::deserialize(proof.as_ref()).expect("failed to deserialize proof");
-        RAPS::verify_compressed_proof(&vk, &proof)
+        RAPS::verify_compressed_proof(&vk_digest, &proof)
     }
 
     pub fn compress_rotation_proof(

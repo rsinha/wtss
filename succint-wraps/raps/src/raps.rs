@@ -12,6 +12,7 @@ use alloy_sol_types::SolType;
 use sp1_sdk::{
     HashableKey, Prover, ProverClient, SP1ProofWithPublicValues, SP1ProvingKey, SP1Stdin, SP1VerifyingKey,
 };
+use sp1_verifier::PlonkVerifier;
 
 pub struct RAPS {}
 
@@ -53,9 +54,13 @@ impl RAPS {
         (pk, vk)
     }
 
+    pub fn extract_vk_digest(vk: &SP1VerifyingKey) -> String {
+        vk.bytes32()
+    }
+
     #[allow(clippy::too_many_arguments)]
     /// Creates the first proof for the genesis AddressBook.
-    pub fn construct_rotation_proof(
+    pub fn construct_uncompressed_proof(
         pk: &SP1ProvingKey,                           // proving key output by sp1 setup
         vk: &SP1VerifyingKey,                         // verifying key output by sp1 setup
         ab_genesis_hash: &[u8; HASH_LENGTH],          // genesis AddressBook hash
@@ -100,7 +105,7 @@ impl RAPS {
         Ok(proof)
     }
 
-    pub fn verify_proof(vk: &SP1VerifyingKey, proof: &SP1ProofWithPublicValues) -> bool {
+    pub fn verify_uncompressed_proof(vk: &SP1VerifyingKey, proof: &SP1ProofWithPublicValues) -> bool {
         // Setup the prover client.
         let client = ProverClient::builder().cpu().build();
         let verification = client.verify(proof, vk);
@@ -131,9 +136,9 @@ impl RAPS {
         raps_vk: &SP1VerifyingKey,                    // verifying key output by sp1 setup for RAPS zkVM
         ab_genesis_hash: &[u8; HASH_LENGTH],          // genesis AddressBook hash
         ab_current_hash: &[u8; HASH_LENGTH],          // current AddressBook hash
-        ab_next_hash: &[u8; HASH_LENGTH],          // current AddressBook hash
+        ab_next_hash: &[u8; HASH_LENGTH],             // current AddressBook hash
         tss_vk_hash: &[u8; HASH_LENGTH],              // TSS verification key for the next AddressBook
-        proof: SP1ProofWithPublicValues,             // the proof to compress
+        proof: SP1ProofWithPublicValues,              // the proof to compress
     ) -> Result<SP1ProofWithPublicValues, RAPSError>{
         let prover = ProverClient::builder().cpu().build();
 
@@ -166,12 +171,15 @@ impl RAPS {
         Ok(compressed_proof)
     }
 
-    pub fn verify_compressed_proof(compression_vk: &SP1VerifyingKey, compressed_proof: &SP1ProofWithPublicValues) -> bool {
-        // Setup the prover client.
-        let client = ProverClient::builder().cpu().build();
-        let verification = client.verify(compressed_proof, compression_vk);
+    pub fn verify_compressed_proof(compression_vk_digest: &str, compressed_proof: &SP1ProofWithPublicValues) -> bool {
+        let result = PlonkVerifier::verify(
+            &compressed_proof.bytes(),
+            &compressed_proof.public_values.to_vec(),
+            compression_vk_digest,
+            &sp1_verifier::PLONK_VK_BYTES
+        );
 
-        verification.is_ok()
+        result.is_ok()
     }
 }
 

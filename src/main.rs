@@ -138,6 +138,8 @@ fn main() {
 
     let (pk, vk) = RAPS::proof_setup(raps_elf);
     let (compression_pk, compression_vk) = RAPS::proof_setup(compression_elf);
+    let compression_vk_digest = RAPS::extract_vk_digest(&compression_vk);
+    println!("compression_vk_digest length: {:?}", compression_vk_digest.len());
 
     // AB 0 (genesis AB)
     let genesis_committee = Roster::new(5);
@@ -235,7 +237,7 @@ fn main() {
         // verify the compressed proof
         let verifier_time = std::time::Instant::now();
         assert!(RAPS::verify_compressed_proof(
-            &compression_vk,
+            &compression_vk_digest,
             &compressed_proof
         ));
         println!("Verifier time for compressed proof: {:?}", verifier_time.elapsed());
@@ -277,7 +279,7 @@ fn verify_combined_proof(
     let hints_vk = HinTS::deserialize::<HinTS::VerificationKey>(hints_vk_encoded);
 
     let verifier_time = std::time::Instant::now();
-    let wraps_result = RAPS::verify_proof(raps_vk_encoded, raps_proof_encoded);
+    let wraps_result = RAPS::verify_uncompressed_proof(raps_vk_encoded, raps_proof_encoded);
     println!("Verifier time for RAPS proof: {:?}", verifier_time.elapsed());
 
     let verifier_time = std::time::Instant::now();
