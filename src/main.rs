@@ -184,10 +184,6 @@ fn main() {
             next_roster.verifying_keys.clone(),
             next_roster.weights.clone(),
         );
-        let prev_roster_hash = RAPS::compute_address_book_hash(
-            prev_roster.verifying_keys.clone(),
-            prev_roster.weights.clone(),
-        );
 
         // compute HinTS verification key
         let (tss_crs, tss_ak, tss_vk, tss_sks, _) = sample_universe(32);
@@ -225,10 +221,6 @@ fn main() {
         let compressed_proof = RAPS::compress_rotation_proof(
             &compression_pk,
             &vk,
-            &genesis_ab_hash,
-            &prev_roster_hash,
-            &next_roster_hash,
-            &tss_vk_hash,
             &next_proof
         );
         println!("Compression time: {:?}", prover_time.elapsed());

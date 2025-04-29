@@ -134,20 +134,19 @@ impl RAPS {
     pub fn compress_rotation_proof(
         compression_pk: &SP1ProvingKey,               // proving key output by sp1 setup for compression zkVM
         raps_vk: &SP1VerifyingKey,                    // verifying key output by sp1 setup for RAPS zkVM
-        ab_genesis_hash: &[u8; HASH_LENGTH],          // genesis AddressBook hash
-        ab_current_hash: &[u8; HASH_LENGTH],          // current AddressBook hash
-        ab_next_hash: &[u8; HASH_LENGTH],             // current AddressBook hash
-        tss_vk_hash: &[u8; HASH_LENGTH],              // TSS verification key for the next AddressBook
         proof: SP1ProofWithPublicValues,              // the proof to compress
     ) -> Result<SP1ProofWithPublicValues, RAPSError>{
         let prover = ProverClient::builder().cpu().build();
 
+        let parsed_proof = PublicValuesStruct::abi_decode(&proof.public_values.to_vec(), true)
+            .map_err(|_| RAPSError::InvalidInput(("error decoding previous proof").to_string()))?;
+
         let statement = CompressedStatement {
             vk_digest: raps_vk.hash_u32(),
-            ab_genesis_hash: ab_genesis_hash.clone(),
-            ab_current_hash: ab_current_hash.clone(),
-            ab_next_hash: ab_next_hash.clone(),
-            tss_vk_current_hash: tss_vk_hash.clone(),
+            ab_genesis_hash: parsed_proof.ab_genesis_hash.0,
+            ab_current_hash: parsed_proof.ab_curr_hash.0,
+            ab_next_hash: parsed_proof.ab_next_hash.0,
+            tss_vk_current_hash: parsed_proof.tss_vk_hash.0,
         };
 
         // Supply the statement and (optional) prev proof to the zkVM

@@ -131,10 +131,6 @@ impl ByteRAPS {
     pub fn compress_rotation_proof(
         compression_pk: impl AsRef<[u8]>,    // proving key output by sp1 setup for compression zkVM
         raps_vk: impl AsRef<[u8]>,           // verifying key output by sp1 setup for RAPS zkVM
-        ab_genesis_hash: &[u8; 32],          // genesis AddressBook hash
-        ab_current_hash: &[u8; 32],          // current AddressBook hash
-        ab_next_hash: &[u8; 32],             // next AddressBook hash
-        tss_vk_hash: &[u8; 32],              // TSS verification key for the next AddressBook
         proof: impl AsRef<[u8]>,             // the proof to compress
     ) -> Vec<u8> {
         let compression_pk: SP1ProvingKey = bincode::deserialize(compression_pk.as_ref()).expect("failed to deserialize pk");
@@ -144,10 +140,6 @@ impl ByteRAPS {
         let compressed_proof = RAPS::compress_rotation_proof(
             &compression_pk,
             &raps_vk,
-            ab_genesis_hash,
-            ab_current_hash,
-            ab_next_hash,
-            tss_vk_hash,
             proof,
         ).expect("failed to compress proof");
 
