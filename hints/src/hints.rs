@@ -399,6 +399,11 @@ impl HinTS {
             return Err(HinTSError::InvalidNetworkSize(n));
         }
 
+        // we need at least one reserved location for hinTS
+        if signer_info.len() + 1 > n {
+            return Err(HinTSError::InvalidNetworkSize(n));
+        }
+
         // CRS must be large enough to support the operation
         // NOTE: CRS must also be valid, but we assume that here!
         if crs.powers_of_g.len() - 1 < n {
@@ -489,14 +494,44 @@ impl HinTS {
 
     /// verifies the partial signature under the signer's public key
     pub fn partial_verify(
-        crs: &CRS,
         msg: &[u8],
         ak: &AggregationKey,
         party_id: usize,
         sig: &PartialSignature
     ) -> Result<bool, HinTSError> {
+        // party_id can only be between 0 and n-2, inclusive
+        if party_id >= ak.n - 1 { // usize ensures non-negative
+            return Err(HinTSError::InvalidInput(
+                format!("signer_id {} out of range", party_id))
+            );
+        }
+
         let lhs = <Curve as Pairing>::pairing(ak.pks[party_id], hash_to_g2(msg)?);
-        let rhs = <Curve as Pairing>::pairing(crs.powers_of_g[0], sig);
+        let rhs = <Curve as Pairing>::pairing(G1AffinePoint::generator(), sig);
+        Ok(lhs == rhs)
+    }
+
+    /// verifies the list of partial signatures from a list of signers
+    pub fn partial_verify_batch(
+        msg: &[u8],
+        ak: &AggregationKey,
+        signer_ids: impl AsRef<[usize]>,
+        signatures: impl AsRef<[PartialSignature]>,
+    ) -> Result<bool, HinTSError> {
+        // ensure all signer_ids are within the valid range
+        if signer_ids.as_ref().iter().any(|&id| id >= ak.n - 1) {
+            return Err(HinTSError::InvalidInput(
+                "One or more signer_ids are out of range".to_string(),
+            ));
+        }
+
+        // compute aggregate public key of all signers
+        let apk = add::<G1AffinePoint>(signer_ids.as_ref().iter().map(|&x| ak.pks[x]));
+        // compute aggregate signature
+        let agg_sig = add::<G2AffinePoint>(signatures.as_ref().iter().map(|sig| sig.clone()));
+
+        let lhs = <Curve as Pairing>::pairing(apk, hash_to_g2(msg)?);
+        let rhs = <Curve as Pairing>::pairing(G1AffinePoint::generator(), agg_sig);
         Ok(lhs == rhs)
     }
 
@@ -947,19 +982,19 @@ pub fn serialize<T: CanonicalSerialize>(
     Ok(buf)
 }
 
-/// An UNSAFE private helper method to use in Rust unit tests in this inner `tests` module ONLY.
-/// This method assumes that the deserialization succeeds, which the tests must guarantee.
-/// DO NOT use this method in production code because it will cause a panic and a JVM crash
-/// if the input buffer cannot be deserialized properly.
-pub fn deserialize<T: CanonicalDeserialize>(buf: &[u8]) -> T {
-    T::deserialize_uncompressed(buf).unwrap()
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::setup::PowersOfTauProtocol;
     use rand::Rng;
+
+    /// An UNSAFE private helper method to use in Rust unit tests in this inner `tests` module ONLY.
+    /// This method assumes that the deserialization succeeds, which the tests must guarantee.
+    /// DO NOT use this method in production code because it will cause a panic and a JVM crash
+    /// if the input buffer cannot be deserialized properly.
+    fn deserialize<T: CanonicalDeserialize>(buf: &[u8]) -> T {
+        T::deserialize_uncompressed(buf).unwrap()
+    }
 
     #[test]
     fn test_serialization() {
@@ -1019,6 +1054,19 @@ mod tests {
 
         let (crs, ak, vk, sks, _) = sample_universe(universe_n);
         let sigs = sample_signing(num_signers, msg, &sks);
+
+        for (i, sig) in sigs.iter() {
+            assert!(HinTS::partial_verify(msg, &ak, *i, sig).unwrap());
+        }
+
+        assert!(
+            HinTS::partial_verify_batch(
+                msg,
+                &ak,
+                sigs.keys().cloned().collect::<Vec<usize>>(),
+                sigs.values().cloned().collect::<Vec<PartialSignature>>()
+            ).unwrap()
+        );
 
         let π = HinTS::aggregate(&crs, &ak, &vk, &sigs).unwrap();
 
