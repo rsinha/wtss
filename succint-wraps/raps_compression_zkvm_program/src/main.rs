@@ -8,7 +8,6 @@
 sp1_zkvm::entrypoint!(main);
 
 use ab_rotation_lib::{
-    address_book::serialize_and_digest_sha256,
     sha256::digest_sha256,
     statement::CompressedStatement,
     PublicValuesStruct, CompressedPublicValuesStruct,
