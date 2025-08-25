@@ -18,7 +18,10 @@ impl Roster {
     pub fn new(n: usize) -> Self {
         let mut verifying_keys = Vec::new();
         let mut signing_keys = Vec::new();
-        let weights = vec![1u64; n];
+        let mut csprng = rand::rngs::OsRng;
+        let weights = (0..n)
+            .map(|_| csprng.gen_range(5..10))
+            .collect();
 
         for i in 0..n {
             let (sk, vk) = RAPS::keygen([i as u8; 32]);
@@ -131,6 +134,7 @@ fn load_elf(elf_name: &'static str) -> Vec<u8> {
 }
 
 fn main() {
+    let compress_proofs: bool = true;
     let mut rng = rand::thread_rng();
 
     let raps_elf = load_elf("ab-rotation-program");
@@ -216,23 +220,25 @@ fn main() {
         println!("Prover time: {:?}", prover_time.elapsed());
         println!("Proof size: {}", next_proof.len());
 
-        // let us compress the above proof
-        let prover_time = std::time::Instant::now();
-        let compressed_proof = RAPS::compress_rotation_proof(
-            &compression_pk,
-            &vk,
-            &next_proof
-        );
-        println!("Compression time: {:?}", prover_time.elapsed());
-        println!("Compressed proof size: {}", compressed_proof.len());
+        if compress_proofs {
+            // let us compress the above proof
+            let prover_time = std::time::Instant::now();
+            let compressed_proof = RAPS::compress_rotation_proof(
+                &compression_pk,
+                &vk,
+                &next_proof
+            );
+            println!("Compression time: {:?}", prover_time.elapsed());
+            println!("Compressed proof size: {}", compressed_proof.len());
 
-        // verify the compressed proof
-        let verifier_time = std::time::Instant::now();
-        assert!(RAPS::verify_compressed_proof(
-            &compression_vk_digest,
-            &compressed_proof
-        ));
-        println!("Verifier time for compressed proof: {:?}", verifier_time.elapsed());
+            // verify the compressed proof
+            let verifier_time = std::time::Instant::now();
+            assert!(RAPS::verify_compressed_proof(
+                &compression_vk_digest,
+                &compressed_proof
+            ));
+            println!("Verifier time for compressed proof: {:?}", verifier_time.elapsed());
+        }
 
         // generate a HinTS proof
         let platform_state_root = [0u8; 48];
