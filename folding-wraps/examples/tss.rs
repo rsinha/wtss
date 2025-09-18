@@ -35,6 +35,8 @@ use folding_schemes::commitment::{kzg::KZG, pedersen::Pedersen, CommitmentScheme
 use folding_schemes::folding::nova::{
     Nova,
     PreprocessorParam,
+    ProverParams,
+    VerifierParams,
     decider_eth::Decider as DeciderEth,
     decider_eth::Proof as EthProof,
     decider_eth::VerifierParam as VerifierParam
@@ -51,6 +53,15 @@ pub const MAX_AB_SIZE: usize = 16;
 pub const MAX_EXT_INPUTS: usize = 68 * MAX_AB_SIZE;
 type AddressBook = [schnorr::PublicKey<JubJub>; MAX_AB_SIZE];
 type Keys = [schnorr::SecretKey<JubJub>; MAX_AB_SIZE];
+/// The idea here is that eventually we could replace the next line chunk that defines the
+/// `type N = Nova<...>` by using another folding scheme that fulfills the `FoldingScheme`
+/// trait, and the rest of our code would be working without needing to be updated.
+type N = Nova<G1, G2, TSSFCircuit<MAX_AB_SIZE>, KZG<'static, Bn254>, Pedersen<G2>, false>;
+type NPP = ProverParams<G1, G2, KZG<'static, Bn254>, Pedersen<G2>, false>;
+type NVP = VerifierParams<G1, G2, KZG<'static, Bn254>, Pedersen<G2>, false>;
+type D = DeciderEth<G1, G2, TSSFCircuit<MAX_AB_SIZE>, KZG<'static, Bn254>, Pedersen<G2>, Groth16<Bn254>, N>;
+type DPP = (<Groth16<Bn254> as ark_snark::SNARK<Fr>>::ProvingKey, <KZG<'static, Bn254> as CommitmentScheme<G1>>::ProverParams);
+type DVP = VerifierParam<G1, <KZG<'static, Bn254> as CommitmentScheme<G1>>::VerifierParams, <Groth16<Bn254> as ark_snark::SNARK<Fr>>::VerifyingKey>;
 
 #[derive(Clone, Debug)]
 pub struct VecF<F: PrimeField, const L: usize>(pub Vec<F>);
@@ -89,10 +100,10 @@ impl<F: PrimeField, const L: usize> Default for VecFpVar<F, L> {
 /// In this example we set z_i and z_{i+1} to be a single value, but the trait is made to support
 /// arrays, so our state could be an array with different values.
 #[derive(Clone, Copy, Debug)]
-pub struct TSSFCircuit<const N: usize> {
+pub struct TSSFCircuit<const K: usize> {
     _f: PhantomData<Fr>,
 }
-impl<const N: usize> FCircuit<Fr> for TSSFCircuit<N> {
+impl<const K: usize> FCircuit<Fr> for TSSFCircuit<K> {
     type Params = ();
     type ExternalInputs = VecF<Fr, MAX_EXT_INPUTS>;
     type ExternalInputsVar = VecFpVar<Fr, MAX_EXT_INPUTS>;
@@ -112,7 +123,7 @@ impl<const N: usize> FCircuit<Fr> for TSSFCircuit<N> {
         external_inputs: Self::ExternalInputsVar,
     ) -> Result<Vec<FpVar<Fr>>, SynthesisError> {
 
-        let prev_pks = (0..N)
+        let prev_pks = (0..K)
             .map(|i| SPkVar::new_witness(cs.clone(), || Ok(
                 ark_ed_on_bn254::EdwardsAffine::new(
                     external_inputs.0[2*i].value()?,
@@ -121,21 +132,21 @@ impl<const N: usize> FCircuit<Fr> for TSSFCircuit<N> {
             )).unwrap())
             .collect::<Vec<_>>();
 
-        let next_pks = (0..N)
+        let next_pks = (0..K)
             .map(|i| SPkVar::new_witness(cs.clone(), || Ok(
                 ark_ed_on_bn254::EdwardsAffine::new(
-                    external_inputs.0[2*N + 2*i].value()?,
-                    external_inputs.0[2*N + 2*i + 1].value()?
+                    external_inputs.0[2*K + 2*i].value()?,
+                    external_inputs.0[2*K + 2*i + 1].value()?
                 )
             )).unwrap())
             .collect::<Vec<_>>();
 
-        let signatures = (0..N)
+        let signatures = (0..K)
             .map(|i| SSigVar {
-                verifier_challenge: (4*N + 64*i..4*N + 64*i + 32)
+                verifier_challenge: (4*K + 64*i..4*K + 64*i + 32)
                     .map(|j| external_inputs.0[j].to_bytes_le().unwrap()[0].clone())
                     .collect(),
-                prover_response: (4*N + 64*i + 32..4*N + 64*i + 64)
+                prover_response: (4*K + 64*i + 32..4*K + 64*i + 64)
                     .map(|j| external_inputs.0[j].to_bytes_le().unwrap()[0].clone())
                     .collect(),
                 _group: PhantomData,
@@ -143,18 +154,18 @@ impl<const N: usize> FCircuit<Fr> for TSSFCircuit<N> {
             .collect::<Vec<_>>();
 
         let recomputed_prev_state = {
-            let sha_input: Vec<UInt8<Fr>> = (0..N)
+            let sha_input: Vec<UInt8<Fr>> = (0..K)
                 .flat_map(|i| external_inputs.0[2*i].to_bytes_le().unwrap())
                 .collect();
-            let sha_output = Sha256Gadget::evaluate(&UnitVar::default(), &sha_input)?;
+            let sha_output = Sha256Gadget::evaluate(&UnitVar::default(), &sha_input[0..32])?;
             sha_output.0.to_constraint_field()?
         };
 
         let computed_next_state = {
-            let sha_input: Vec<UInt8<Fr>> = (0..N)
-                .flat_map(|i| external_inputs.0[2*N + 2*i].to_bytes_le().unwrap())
+            let sha_input: Vec<UInt8<Fr>> = (0..K)
+                .flat_map(|i| external_inputs.0[2*K + 2*i].to_bytes_le().unwrap())
                 .collect();
-            let sha_output = Sha256Gadget::evaluate(&UnitVar::default(), &sha_input)?;
+            let sha_output = Sha256Gadget::evaluate(&UnitVar::default(), &sha_input[0..32])?;
             sha_output.0.to_constraint_field()?
         };
 
@@ -166,14 +177,14 @@ impl<const N: usize> FCircuit<Fr> for TSSFCircuit<N> {
             ::verify(&parameters_var, &prev_pks[0], &msg_var, &signatures[0]).unwrap();
         valid_sig_var.enforce_equal(&Boolean::<Fr>::TRUE)?;
 
-        for i in 0..N {
+        for i in 0..K {
             prev_pks[i].pub_key.x.enforce_equal(&external_inputs.0[2*i])?;
             prev_pks[i].pub_key.y.enforce_equal(&external_inputs.0[2*i + 1])?;
         }
 
-        for i in 0..N {
-            next_pks[i].pub_key.x.enforce_equal(&external_inputs.0[2*N + 2*i])?;
-            next_pks[i].pub_key.y.enforce_equal(&external_inputs.0[2*N + 2*i + 1])?;
+        for i in 0..K {
+            next_pks[i].pub_key.x.enforce_equal(&external_inputs.0[2*K + 2*i])?;
+            next_pks[i].pub_key.y.enforce_equal(&external_inputs.0[2*K + 2*i + 1])?;
         }
 
         recomputed_prev_state[0].enforce_equal(&z_i[0])?;
@@ -185,7 +196,7 @@ fn hash_addressbook(ab: &AddressBook) -> Fr {
     let sha_input: Vec<u8> = ab.iter()
         .flat_map(|pk| pk.x.into_bigint().to_bytes_le())
         .collect();
-    let out_bytes = Sha256::evaluate(&(), sha_input).unwrap();
+    let out_bytes = Sha256::evaluate(&(), &sha_input[0..32]).unwrap();
     let out: Vec<Fr> = out_bytes.to_field_elements().unwrap();
     // because of modulus, we actually get two Fr elemeents, but we will only use the first one
     out[0]
@@ -202,31 +213,65 @@ fn create_new_addressbook(params: &SParams) -> (AddressBook, Keys) {
     (ab.try_into().unwrap(), keys.try_into().unwrap())
 }
 
-/// cargo run --release --example tss
-fn main() -> Result<(), Error> {
-    let num_steps = 5;
+pub struct TSSPublicParams {
+    pub nova_pp: Vec<u8>,
+    pub nova_vp: Vec<u8>,
+    pub decider_pp: Vec<u8>,
+    pub decider_vp:Vec<u8>,
+}
 
-    let mut rng = thread_rng();
-    let schnorr_parameters = S::setup::<_>(&mut rng).unwrap();
-
-    let F_circuit = TSSFCircuit::<MAX_AB_SIZE>::new(())?;
-
-    /// The idea here is that eventually we could replace the next line chunk that defines the
-    /// `type N = Nova<...>` by using another folding scheme that fulfills the `FoldingScheme`
-    /// trait, and the rest of our code would be working without needing to be updated.
-    type N = Nova<G1, G2, TSSFCircuit<MAX_AB_SIZE>, KZG<'static, Bn254>, Pedersen<G2>, false>;
-    type D = DeciderEth<G1, G2, TSSFCircuit<MAX_AB_SIZE>, KZG<'static, Bn254>, Pedersen<G2>, Groth16<Bn254>, N>;
-
+fn setup(circuit: &TSSFCircuit<MAX_AB_SIZE>) -> Result<TSSPublicParams, Error> {
     let poseidon_config = poseidon_canonical_config::<Fr>();
     let mut rng = rand::rngs::OsRng;
 
     println!("Prepare Nova ProverParams & VerifierParams");
-    let nova_preprocess_params = PreprocessorParam::new(poseidon_config, F_circuit);
-    let nova_params = N::preprocess(&mut rng, &nova_preprocess_params)?;
+    let nova_preprocess_params = PreprocessorParam::new(poseidon_config, circuit.clone());
+    let (nova_pp, nova_vp) = N::preprocess(&mut rng, &nova_preprocess_params)?;
+    let (decider_pp, decider_vp) = D::preprocess(&mut rng, ((nova_pp.clone(), nova_vp.clone()), circuit.state_len()))?;
 
-    let (decider_pp, decider_vp) = D::preprocess(&mut rng, (nova_params.clone(), F_circuit.state_len()))?;
+    let mut nova_pp_serialized = vec![];
+    nova_pp.serialize_compressed(&mut nova_pp_serialized)?;
+    println!("Nova ProverParam serialized size: {} bytes", nova_pp_serialized.len());
+
+    let mut nova_vp_serialized = vec![];
+    nova_vp.serialize_compressed(&mut nova_vp_serialized)?;
+    println!("Nova VerifierParam serialized size: {} bytes", nova_vp_serialized.len());
+
+    // Serialize decider_pp and decider_vp
+    let mut decider_pp_serialized = vec![];
+    decider_pp.serialize_compressed(&mut decider_pp_serialized)?;
+    println!("Decider PreprocessorParam serialized size: {} bytes", decider_pp_serialized.len());
+
+    let mut decider_vp_serialized = vec![];
+    decider_vp.serialize_compressed(&mut decider_vp_serialized)?;
+    println!("Decider VerifierParam serialized size: {} bytes", decider_vp_serialized.len());
+
+    Ok(TSSPublicParams {
+        nova_pp: nova_pp_serialized,
+        nova_vp: nova_vp_serialized,
+        decider_pp: decider_pp_serialized,
+        decider_vp: decider_vp_serialized,
+    })
+}
+
+/// cargo run --release --example tss
+fn main() -> Result<(), Error> {
+    let num_steps = 5;
+    let F_circuit = TSSFCircuit::<MAX_AB_SIZE>::new(())?;
+
+    let params = setup(&F_circuit)?;
+    let nova_pp: NPP = N::pp_deserialize_with_mode(params.nova_pp.as_slice(), ark_serialize::Compress::Yes, ark_serialize::Validate::Yes, ())?;
+    println!("Nova ProverParam deserialized successfully");
+    let nova_vp: NVP = N::vp_deserialize_with_mode(params.nova_vp.as_slice(), ark_serialize::Compress::Yes, ark_serialize::Validate::Yes, ())?;
+    println!("Nova VerifierParam deserialized successfully");
+    let decider_pp = DPP::deserialize_compressed(params.decider_pp.as_slice())?;
+    println!("Decider PreprocessorParam deserialized successfully");
+    let decider_vp = DVP::deserialize_compressed(params.decider_vp.as_slice())?;
+    println!("Decider VerifierParam deserialized successfully");
+    let nova_params = (nova_pp, nova_vp);
 
     println!("Initialize FoldingScheme");
+    let schnorr_parameters = S::setup::<_>(&mut thread_rng()).unwrap();
     let (mut prev_ab, mut prev_keys) = create_new_addressbook(&schnorr_parameters);
     let initial_state = vec![hash_addressbook(&prev_ab)];
     let mut folding_scheme = N::init(&nova_params, F_circuit, initial_state.clone())?;
@@ -246,7 +291,7 @@ fn main() -> Result<(), Error> {
 
         let message = hash_addressbook(&next_ab).into_bigint().to_bytes_le();
         let signatures: Vec<_> = (0..MAX_AB_SIZE)
-            .map(|j| S::sign(&schnorr_parameters, &prev_keys[j], &message, &mut rng).unwrap())
+            .map(|j| S::sign(&schnorr_parameters, &prev_keys[j], &message, &mut thread_rng()).unwrap())
             .collect();
         for i in 0..MAX_AB_SIZE {
             let verifier_challenge = signatures[i].verifier_challenge;
@@ -260,7 +305,7 @@ fn main() -> Result<(), Error> {
         }
 
         let start = std::time::Instant::now();
-        folding_scheme.prove_step(rng, VecF(external_inputs_at_step.clone()), None)?;
+        folding_scheme.prove_step(thread_rng(), VecF(external_inputs_at_step.clone()), None)?;
         println!("Nova::prove_step {}: {:?}", i, start.elapsed());
 
         prev_ab = next_ab;
@@ -275,7 +320,7 @@ fn main() -> Result<(), Error> {
     )?;
 
     let start = std::time::Instant::now();
-    let proof = D::prove(rng, decider_pp, folding_scheme.clone())?;
+    let proof = D::prove(thread_rng(), decider_pp, folding_scheme.clone())?;
     println!("generated Decider proof: {:?}", start.elapsed());
 
     let verified = D::verify(
