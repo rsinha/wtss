@@ -49,7 +49,7 @@ use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 use ark_std::fmt::Debug;
 use core::borrow::Borrow;
 
-pub const MAX_AB_SIZE: usize = 16;
+pub const MAX_AB_SIZE: usize = 4;
 pub const MAX_EXT_INPUTS: usize = 68 * MAX_AB_SIZE;
 type AddressBook = [schnorr::PublicKey<JubJub>; MAX_AB_SIZE];
 type Keys = [schnorr::SecretKey<JubJub>; MAX_AB_SIZE];
@@ -157,7 +157,7 @@ impl<const K: usize> FCircuit<Fr> for TSSFCircuit<K> {
             let sha_input: Vec<UInt8<Fr>> = (0..K)
                 .flat_map(|i| external_inputs.0[2*i].to_bytes_le().unwrap())
                 .collect();
-            let sha_output = Sha256Gadget::evaluate(&UnitVar::default(), &sha_input[0..32])?;
+            let sha_output = Sha256Gadget::evaluate(&UnitVar::default(), &sha_input)?;
             sha_output.0.to_constraint_field()?
         };
 
@@ -165,7 +165,7 @@ impl<const K: usize> FCircuit<Fr> for TSSFCircuit<K> {
             let sha_input: Vec<UInt8<Fr>> = (0..K)
                 .flat_map(|i| external_inputs.0[2*K + 2*i].to_bytes_le().unwrap())
                 .collect();
-            let sha_output = Sha256Gadget::evaluate(&UnitVar::default(), &sha_input[0..32])?;
+            let sha_output = Sha256Gadget::evaluate(&UnitVar::default(), &sha_input)?;
             sha_output.0.to_constraint_field()?
         };
 
@@ -196,7 +196,7 @@ fn hash_addressbook(ab: &AddressBook) -> Fr {
     let sha_input: Vec<u8> = ab.iter()
         .flat_map(|pk| pk.x.into_bigint().to_bytes_le())
         .collect();
-    let out_bytes = Sha256::evaluate(&(), &sha_input[0..32]).unwrap();
+    let out_bytes = Sha256::evaluate(&(), sha_input).unwrap();
     let out: Vec<Fr> = out_bytes.to_field_elements().unwrap();
     // because of modulus, we actually get two Fr elemeents, but we will only use the first one
     out[0]
@@ -224,7 +224,7 @@ fn setup(circuit: &TSSFCircuit<MAX_AB_SIZE>) -> Result<TSSPublicParams, Error> {
     let poseidon_config = poseidon_canonical_config::<Fr>();
     let mut rng = rand::rngs::OsRng;
 
-    println!("Prepare Nova ProverParams & VerifierParams");
+    println!("Preparing Nova ProverParams & VerifierParams");
     let nova_preprocess_params = PreprocessorParam::new(poseidon_config, circuit.clone());
     let (nova_pp, nova_vp) = N::preprocess(&mut rng, &nova_preprocess_params)?;
     let (decider_pp, decider_vp) = D::preprocess(&mut rng, ((nova_pp.clone(), nova_vp.clone()), circuit.state_len()))?;
@@ -254,12 +254,58 @@ fn setup(circuit: &TSSFCircuit<MAX_AB_SIZE>) -> Result<TSSPublicParams, Error> {
     })
 }
 
+fn load_params_from_disk() -> Result<TSSPublicParams, std::io::Error> {
+    let nova_pp_path = "/tmp/tss_nova_pp.bin";
+    let nova_vp_path = "/tmp/tss_nova_vp.bin";
+    let decider_pp_path = "/tmp/tss_decider_pp.bin";
+    let decider_vp_path = "/tmp/tss_decider_vp.bin";
+
+    let e1 = std::path::Path::new(nova_pp_path).exists();
+    let e2 = std::path::Path::new(nova_vp_path).exists();
+    let e3 = std::path::Path::new(decider_pp_path).exists();
+    let e4 = std::path::Path::new(decider_vp_path).exists();
+    if e1 && e2 && e3 && e4 {
+        println!("Loading Nova ProverParams & VerifierParams");
+        let nova_pp = std::fs::read(nova_pp_path)?;
+        let nova_vp = std::fs::read(nova_vp_path)?;
+        let decider_pp = std::fs::read(decider_pp_path)?;
+        let decider_vp = std::fs::read(decider_vp_path)?;
+
+        Ok(TSSPublicParams {
+            nova_pp,
+            nova_vp,
+            decider_pp,
+            decider_vp,
+        })
+    } else {
+        Err(std::io::Error::new(std::io::ErrorKind::NotFound, "File does not exist"))
+    }
+}
+
+fn write_params_to_disk(params: &TSSPublicParams) -> Result<(), std::io::Error> {
+    std::fs::write("/tmp/tss_nova_pp.bin", &params.nova_pp)?;
+    std::fs::write("/tmp/tss_nova_vp.bin", &params.nova_vp)?;
+    std::fs::write("/tmp/tss_decider_pp.bin", &params.decider_pp)?;
+    std::fs::write("/tmp/tss_decider_vp.bin", &params.decider_vp)?;
+    Ok(())
+}
+
 /// cargo run --release --example tss
 fn main() -> Result<(), Error> {
     let num_steps = 5;
     let F_circuit = TSSFCircuit::<MAX_AB_SIZE>::new(())?;
 
-    let params = setup(&F_circuit)?;
+    let params = load_params_from_disk();
+    if params.is_err() {
+        println!("Params not found on disk, running setup");
+        let params_setup = setup(&F_circuit)?;
+        println!("Storing Nova ProverParams & VerifierParams");
+        write_params_to_disk(&params_setup).unwrap();
+        // let us exit and try loading them next time around
+        std::process::exit(0);
+    }
+
+    let params = params.unwrap(); // safe because we checked above
     let nova_pp: NPP = N::pp_deserialize_with_mode(params.nova_pp.as_slice(), ark_serialize::Compress::Yes, ark_serialize::Validate::Yes, ())?;
     println!("Nova ProverParam deserialized successfully");
     let nova_vp: NVP = N::vp_deserialize_with_mode(params.nova_vp.as_slice(), ark_serialize::Compress::Yes, ark_serialize::Validate::Yes, ())?;
