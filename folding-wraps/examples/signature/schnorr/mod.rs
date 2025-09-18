@@ -152,7 +152,6 @@ pub struct ThresholdSchnorrState<C: CurveGroup> {
     signing_key: C::ScalarField,
     random_scalar: C::ScalarField,
     round1_messages: Vec<ThresholdSchnorrMessage1>,
-    round2_messages: Vec<ThresholdSchnorrMessage1>
 }
 
 pub type ThresholdSchnorrMessage1 = [u8; 32];
@@ -172,7 +171,6 @@ where
             signing_key: sk.secret_key,
             random_scalar: C::ScalarField::rand(rng),
             round1_messages: vec![],
-            round2_messages: vec![]
         }
     }
 
