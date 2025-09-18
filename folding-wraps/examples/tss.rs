@@ -175,9 +175,11 @@ impl<const K: usize> FCircuit<Fr> for TSSFCircuit<K> {
             aggregate_pubkey.add_assign(&tmp);
         }
         let aggregate_pubkey_var = SPkVar {
-            pub_key: aggregate_pubkey,
+            pub_key: aggregate_pubkey.clone(),
             _group: PhantomData,
         };
+        aggregate_pubkey.x.enforce_equal(&aggregate_pubkey_var.pub_key.x)?;
+        aggregate_pubkey.y.enforce_equal(&aggregate_pubkey_var.pub_key.y)?;
 
         let poseidon_config_var = PoseidonCRHParametersVar::new_constant(cs.clone(), poseidon_canonical_config::<Fr>())?;
         let recomputed_prev_state = {
