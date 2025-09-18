@@ -9,12 +9,13 @@ mod random_oracle;
 use signature::{*};
 
 use ark_crypto_primitives::crh::{
-    sha256::constraints::{Sha256Gadget, UnitVar},
-    CRHSchemeGadget, sha256::Sha256, CRHScheme
+    poseidon::constraints::{CRHGadget as PoseidonCRHGadget, CRHParametersVar as PoseidonCRHParametersVar},
+    poseidon::CRH as PoseidonCRH,
+    CRHSchemeGadget, CRHScheme
 };
 use ark_ff::{BigInteger, PrimeField, ToConstraintField};
 use ark_r1cs_std::{
-    alloc::{AllocVar, AllocationMode}, convert::{ToBytesGadget, ToConstraintFieldGadget}, eq::EqGadget, fields::fp::FpVar, prelude::Boolean, uint8::UInt8, GR1CSVar
+    alloc::{AllocVar, AllocationMode}, convert::{ToBytesGadget, ToConstraintFieldGadget}, eq::EqGadget, fields::fp::FpVar, prelude::Boolean, GR1CSVar
 };
 use ark_groth16::{Groth16};
 use ark_relations::gr1cs::{Namespace, ConstraintSystemRef, SynthesisError};
@@ -49,7 +50,7 @@ use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 use ark_std::fmt::Debug;
 use core::borrow::Borrow;
 
-pub const MAX_AB_SIZE: usize = 4;
+pub const MAX_AB_SIZE: usize = 1;
 pub const MAX_EXT_INPUTS: usize = 68 * MAX_AB_SIZE;
 type AddressBook = [schnorr::PublicKey<JubJub>; MAX_AB_SIZE];
 type Keys = [schnorr::SecretKey<JubJub>; MAX_AB_SIZE];
@@ -153,20 +154,21 @@ impl<const K: usize> FCircuit<Fr> for TSSFCircuit<K> {
             })
             .collect::<Vec<_>>();
 
+        let poseidon_config_var = PoseidonCRHParametersVar::new_constant(cs.clone(), poseidon_canonical_config::<Fr>())?;
         let recomputed_prev_state = {
-            let sha_input: Vec<UInt8<Fr>> = (0..K)
-                .flat_map(|i| external_inputs.0[2*i].to_bytes_le().unwrap())
+            let poseidon_input: Vec<FpVar<Fr>> = (0..K)
+                .map(|i| external_inputs.0[2*i].clone())
                 .collect();
-            let sha_output = Sha256Gadget::evaluate(&UnitVar::default(), &sha_input)?;
-            sha_output.0.to_constraint_field()?
+            let poseidon_output = PoseidonCRHGadget::evaluate(&poseidon_config_var, &poseidon_input)?;
+            poseidon_output.to_constraint_field()?
         };
 
         let computed_next_state = {
-            let sha_input: Vec<UInt8<Fr>> = (0..K)
-                .flat_map(|i| external_inputs.0[2*K + 2*i].to_bytes_le().unwrap())
+            let poseidon_input: Vec<FpVar<Fr>> = (0..K)
+                .map(|i| external_inputs.0[2*K + 2*i].clone())
                 .collect();
-            let sha_output = Sha256Gadget::evaluate(&UnitVar::default(), &sha_input)?;
-            sha_output.0.to_constraint_field()?
+            let poseidon_output = PoseidonCRHGadget::evaluate(&poseidon_config_var, &poseidon_input)?;
+            poseidon_output.to_constraint_field()?
         };
 
         let schnorr_parameters = S::setup::<_>(&mut thread_rng()).unwrap();
@@ -193,10 +195,11 @@ impl<const K: usize> FCircuit<Fr> for TSSFCircuit<K> {
 }
 
 fn hash_addressbook(ab: &AddressBook) -> Fr {
-    let sha_input: Vec<u8> = ab.iter()
-        .flat_map(|pk| pk.x.into_bigint().to_bytes_le())
+    let poseidon_input: Vec<Fr> = ab
+        .iter()
+        .map(|pk| pk.x)
         .collect();
-    let out_bytes = Sha256::evaluate(&(), sha_input).unwrap();
+    let out_bytes = PoseidonCRH::evaluate(&poseidon_canonical_config::<Fr>(), poseidon_input).unwrap();
     let out: Vec<Fr> = out_bytes.to_field_elements().unwrap();
     // because of modulus, we actually get two Fr elemeents, but we will only use the first one
     out[0]
