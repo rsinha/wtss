@@ -52,8 +52,8 @@ use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 use ark_std::fmt::Debug;
 use core::borrow::Borrow;
 
-pub const MAX_AB_SIZE: usize = 3;
-pub const MAX_EXT_INPUTS: usize = 69 * MAX_AB_SIZE + 2;
+pub const MAX_AB_SIZE: usize = 30;
+pub const MAX_EXT_INPUTS: usize = 5 * MAX_AB_SIZE + 64;
 type AddressBook = [schnorr::PublicKey<JubJub>; MAX_AB_SIZE];
 type Keys = [schnorr::SecretKey<JubJub>; MAX_AB_SIZE];
 /// The idea here is that eventually we could replace the next line chunk that defines the
@@ -157,17 +157,15 @@ impl<const K: usize> FCircuit<Fr> for TSSFCircuit<K> {
             .map(|i| external_inputs.0[4*K + i].to_bytes_le().unwrap()[0].clone())
             .collect::<Vec<_>>();
 
-        let signatures = (0..K)
-            .map(|i| SSigVar {
-                verifier_challenge: (5*K + 64*i..5*K + 64*i + 32)
-                    .map(|j| external_inputs.0[j].to_bytes_le().unwrap()[0].clone())
-                    .collect(),
-                prover_response: (5*K + 64*i + 32..5*K + 64*i + 64)
-                    .map(|j| external_inputs.0[j].to_bytes_le().unwrap()[0].clone())
-                    .collect(),
-                _group: PhantomData,
-            })
-            .collect::<Vec<_>>();
+        let aggregate_signature = SSigVar {
+            verifier_challenge: (5*K..5*K + 32)
+                .map(|j| external_inputs.0[j].to_bytes_le().unwrap()[0].clone())
+                .collect(),
+            prover_response: (5*K + 32..5*K + 64)
+                .map(|j| external_inputs.0[j].to_bytes_le().unwrap()[0].clone())
+                .collect(),
+            _group: PhantomData,
+        };
 
         let mut aggregate_pubkey = JubJubVar::new_witness(cs.clone(), || Ok(ark_ed_on_bn254::EdwardsAffine::zero()))?;
         for i in 0..K {
@@ -176,6 +174,10 @@ impl<const K: usize> FCircuit<Fr> for TSSFCircuit<K> {
             let tmp = is_present.select(&prev_pk_vars[i], &zero)?;
             aggregate_pubkey.add_assign(&tmp);
         }
+        let aggregate_pubkey_var = SPkVar {
+            pub_key: aggregate_pubkey,
+            _group: PhantomData,
+        };
 
         let poseidon_config_var = PoseidonCRHParametersVar::new_constant(cs.clone(), poseidon_canonical_config::<Fr>())?;
         let recomputed_prev_state = {
@@ -198,11 +200,8 @@ impl<const K: usize> FCircuit<Fr> for TSSFCircuit<K> {
         let parameters_var = <SVerifyGadget as SigVerifyGadget<S, Fr>>
             ::ParametersVar::new_constant(cs.clone(), schnorr_parameters)?;
         let msg_var = computed_next_state[0].to_bytes_le()?;
-        for i in 0..K {
-            let is_present = present_bits[i].is_eq(&UInt::constant(1))?;
-            let valid_sig_var = <SVerifyGadget as SigVerifyGadget<S, Fr>>::verify(&parameters_var, &prev_pks[i], &msg_var, &signatures[i])?;
-            valid_sig_var.conditional_enforce_equal(&Boolean::<Fr>::TRUE, &is_present)?;
-        }
+        let valid_sig_var = <SVerifyGadget as SigVerifyGadget<S, Fr>>::verify(&parameters_var, &aggregate_pubkey_var, &msg_var, &aggregate_signature)?;
+        valid_sig_var.enforce_equal(&Boolean::<Fr>::TRUE)?;
 
         for i in 0..K {
             prev_pks[i].pub_key.x.enforce_equal(&external_inputs.0[2*i])?;
@@ -371,7 +370,7 @@ fn write_params_to_disk(params: &TSSPublicParams) -> Result<(), ark_serialize::S
 
 /// cargo run --release --example tss
 fn main() -> Result<(), Error> {
-    let num_steps = 5;
+    let num_steps = 20;
     let F_circuit = TSSFCircuit::<MAX_AB_SIZE>::new(())?;
 
     // let params = load_params_from_disk();
@@ -409,20 +408,6 @@ fn main() -> Result<(), Error> {
         }
 
         let message = hash_addressbook(&next_ab).into_bigint().to_bytes_le();
-        let signatures: Vec<_> = (0..MAX_AB_SIZE)
-            .map(|j| S::sign(&schnorr_parameters, &prev_keys[j], &message, &mut thread_rng()).unwrap())
-            .collect();
-
-        for i in 0..MAX_AB_SIZE {
-            let verifier_challenge = signatures[i].verifier_challenge;
-            let prover_response = signatures[i].prover_response.into_bigint().to_bytes_le();
-            for j in 0..32 {
-                external_inputs_at_step.push(Fr::from_le_bytes_mod_order(&[verifier_challenge[j]]));
-            }
-            for j in 0..32 {
-                external_inputs_at_step.push(Fr::from_le_bytes_mod_order(&[prover_response[j]]));
-            }
-        }
 
         // compute aggregate public key
         let mut aggregate_pubkey = ark_ed_on_bn254::EdwardsAffine::zero();

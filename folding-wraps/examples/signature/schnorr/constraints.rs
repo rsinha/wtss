@@ -31,7 +31,7 @@ where
 {
     pub pub_key: GC,
     #[doc(hidden)]
-    _group: PhantomData<*const C>,
+    pub _group: PhantomData<*const C>,
 }
 
 #[derive(Clone)]
