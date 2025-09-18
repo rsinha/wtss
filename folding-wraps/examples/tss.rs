@@ -53,7 +53,7 @@ use ark_std::fmt::Debug;
 use core::borrow::Borrow;
 
 pub const MAX_AB_SIZE: usize = 3;
-pub const MAX_EXT_INPUTS: usize = 69 * MAX_AB_SIZE;
+pub const MAX_EXT_INPUTS: usize = 69 * MAX_AB_SIZE + 2;
 type AddressBook = [schnorr::PublicKey<JubJub>; MAX_AB_SIZE];
 type Keys = [schnorr::SecretKey<JubJub>; MAX_AB_SIZE];
 /// The idea here is that eventually we could replace the next line chunk that defines the
@@ -243,8 +243,49 @@ fn create_new_addressbook(params: &SParams) -> (AddressBook, Keys) {
     (ab.try_into().unwrap(), keys.try_into().unwrap())
 }
 
-fn simulate_threshold_signing(present_bits: Vec<bool>, ab: &AddressBook, keys: &Keys, message: &[u8]) {
+fn simulate_threshold_signing(present_bits: Vec<bool>, ab: &AddressBook, keys: &Keys, message: &[u8]) 
+-> signature::schnorr::Signature<JubJub> {
+    let mut aggregate_pubkey = ark_ed_on_bn254::EdwardsAffine::zero();
+    for i in 0..MAX_AB_SIZE {
+        if i % 2 == 0 {
+            aggregate_pubkey = aggregate_pubkey.add(ab[i]).into_affine();
+        }
+    }
 
+    let schnorr_parameters = S::setup::<_>(&mut thread_rng()).unwrap();
+    let mut states = Vec::new();
+    for i in 0..MAX_AB_SIZE {
+        if present_bits[i] {
+            let state = signature::schnorr::ThresholdSchnorr::<JubJub>::
+                initiate_signing_session(&keys[i], &mut thread_rng());
+            states.push(state);
+        }
+    }
+
+    let mut round1_messages = Vec::new();
+    for i in 0..states.len() {
+        let (msg1, state) = signature::schnorr::ThresholdSchnorr::<JubJub>::
+            sign_round1(&schnorr_parameters, states[i].clone()).unwrap();
+        round1_messages.push(msg1);
+        states[i] = state;
+    }
+
+    let mut round2_messages = Vec::new();
+    for i in 0..states.len() {
+        let (msg2, state) = signature::schnorr::ThresholdSchnorr::<JubJub>::
+            sign_round2(&schnorr_parameters, &round1_messages, states[i].clone()).unwrap();
+        round2_messages.push(msg2);
+        states[i] = state;
+    }
+
+    let mut partial_signatures: Vec<_> = Vec::new();
+    for i in 0..states.len() {
+        let partial_signature = signature::schnorr::ThresholdSchnorr::<JubJub>::
+            sign_round3(&schnorr_parameters, &aggregate_pubkey, message, &round2_messages, states[i].clone()).unwrap();
+        partial_signatures.push(partial_signature);
+    }
+
+    signature::schnorr::ThresholdSchnorr::<JubJub>::finish_signing_session(&partial_signatures).unwrap()
 }
 
 pub struct TSSPublicParams {
@@ -371,6 +412,7 @@ fn main() -> Result<(), Error> {
         let signatures: Vec<_> = (0..MAX_AB_SIZE)
             .map(|j| S::sign(&schnorr_parameters, &prev_keys[j], &message, &mut thread_rng()).unwrap())
             .collect();
+
         for i in 0..MAX_AB_SIZE {
             let verifier_challenge = signatures[i].verifier_challenge;
             let prover_response = signatures[i].prover_response.into_bigint().to_bytes_le();
@@ -388,6 +430,16 @@ fn main() -> Result<(), Error> {
             if i % 2 == 0 {
                 aggregate_pubkey = aggregate_pubkey.add(prev_ab[i]).into_affine();
             }
+        }
+        let aggregate_signature = simulate_threshold_signing((0..MAX_AB_SIZE).map(|j| j % 2 == 0).collect(), &prev_ab, &prev_keys, &message);
+        assert!(S::verify(&schnorr_parameters, &aggregate_pubkey, &message, &aggregate_signature).unwrap());
+        let verifier_challenge = aggregate_signature.verifier_challenge;
+        let prover_response = aggregate_signature.prover_response.into_bigint().to_bytes_le();
+        for j in 0..32 {
+            external_inputs_at_step.push(Fr::from_le_bytes_mod_order(&[verifier_challenge[j]]));
+        }
+        for j in 0..32 {
+            external_inputs_at_step.push(Fr::from_le_bytes_mod_order(&[prover_response[j]]));
         }
 
         let start = std::time::Instant::now();
