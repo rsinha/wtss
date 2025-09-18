@@ -8,14 +8,16 @@ mod random_oracle;
 
 use signature::{*};
 
+use std::ops::{Add, AddAssign};
 use ark_crypto_primitives::crh::{
     poseidon::constraints::{CRHGadget as PoseidonCRHGadget, CRHParametersVar as PoseidonCRHParametersVar},
     poseidon::CRH as PoseidonCRH,
     CRHSchemeGadget, CRHScheme
 };
+use ark_ec::CurveGroup;
 use ark_ff::{BigInteger, PrimeField, ToConstraintField};
 use ark_r1cs_std::{
-    alloc::{AllocVar, AllocationMode}, convert::{ToBytesGadget, ToConstraintFieldGadget}, eq::EqGadget, fields::fp::FpVar, prelude::Boolean, GR1CSVar
+    alloc::{AllocVar, AllocationMode}, convert::{ToBytesGadget, ToConstraintFieldGadget}, eq::EqGadget, fields::fp::FpVar, prelude::Boolean, uint::UInt, GR1CSVar
 };
 use ark_groth16::{Groth16};
 use ark_relations::gr1cs::{Namespace, ConstraintSystemRef, SynthesisError};
@@ -50,8 +52,8 @@ use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 use ark_std::fmt::Debug;
 use core::borrow::Borrow;
 
-pub const MAX_AB_SIZE: usize = 1;
-pub const MAX_EXT_INPUTS: usize = 68 * MAX_AB_SIZE;
+pub const MAX_AB_SIZE: usize = 3;
+pub const MAX_EXT_INPUTS: usize = 69 * MAX_AB_SIZE;
 type AddressBook = [schnorr::PublicKey<JubJub>; MAX_AB_SIZE];
 type Keys = [schnorr::SecretKey<JubJub>; MAX_AB_SIZE];
 /// The idea here is that eventually we could replace the next line chunk that defines the
@@ -133,6 +135,15 @@ impl<const K: usize> FCircuit<Fr> for TSSFCircuit<K> {
             )).unwrap())
             .collect::<Vec<_>>();
 
+        let prev_pk_vars = (0..K)
+            .map(|i| JubJubVar::new_witness(cs.clone(), || Ok(
+                ark_ed_on_bn254::EdwardsAffine::new(
+                    external_inputs.0[2*i].value()?,
+                    external_inputs.0[2*i + 1].value()?
+                )
+            )).unwrap())
+            .collect::<Vec<_>>();
+
         let next_pks = (0..K)
             .map(|i| SPkVar::new_witness(cs.clone(), || Ok(
                 ark_ed_on_bn254::EdwardsAffine::new(
@@ -142,17 +153,29 @@ impl<const K: usize> FCircuit<Fr> for TSSFCircuit<K> {
             )).unwrap())
             .collect::<Vec<_>>();
 
+        let present_bits = (0..K)
+            .map(|i| external_inputs.0[4*K + i].to_bytes_le().unwrap()[0].clone())
+            .collect::<Vec<_>>();
+
         let signatures = (0..K)
             .map(|i| SSigVar {
-                verifier_challenge: (4*K + 64*i..4*K + 64*i + 32)
+                verifier_challenge: (5*K + 64*i..5*K + 64*i + 32)
                     .map(|j| external_inputs.0[j].to_bytes_le().unwrap()[0].clone())
                     .collect(),
-                prover_response: (4*K + 64*i + 32..4*K + 64*i + 64)
+                prover_response: (5*K + 64*i + 32..5*K + 64*i + 64)
                     .map(|j| external_inputs.0[j].to_bytes_le().unwrap()[0].clone())
                     .collect(),
                 _group: PhantomData,
             })
             .collect::<Vec<_>>();
+
+        let mut aggregate_pubkey = JubJubVar::new_witness(cs.clone(), || Ok(ark_ed_on_bn254::EdwardsAffine::zero()))?;
+        for i in 0..K {
+            let zero = JubJubVar::new_witness(cs.clone(), || Ok(ark_ed_on_bn254::EdwardsAffine::zero()))?;
+            let is_present = present_bits[i].is_eq(&UInt::constant(1))?;
+            let tmp = is_present.select(&prev_pk_vars[i], &zero)?;
+            aggregate_pubkey.add_assign(&tmp);
+        }
 
         let poseidon_config_var = PoseidonCRHParametersVar::new_constant(cs.clone(), poseidon_canonical_config::<Fr>())?;
         let recomputed_prev_state = {
@@ -175,13 +198,17 @@ impl<const K: usize> FCircuit<Fr> for TSSFCircuit<K> {
         let parameters_var = <SVerifyGadget as SigVerifyGadget<S, Fr>>
             ::ParametersVar::new_constant(cs.clone(), schnorr_parameters)?;
         let msg_var = computed_next_state[0].to_bytes_le()?;
-        let valid_sig_var = <SVerifyGadget as SigVerifyGadget<S, Fr>>
-            ::verify(&parameters_var, &prev_pks[0], &msg_var, &signatures[0]).unwrap();
-        valid_sig_var.enforce_equal(&Boolean::<Fr>::TRUE)?;
+        for i in 0..K {
+            let is_present = present_bits[i].is_eq(&UInt::constant(1))?;
+            let valid_sig_var = <SVerifyGadget as SigVerifyGadget<S, Fr>>::verify(&parameters_var, &prev_pks[i], &msg_var, &signatures[i])?;
+            valid_sig_var.conditional_enforce_equal(&Boolean::<Fr>::TRUE, &is_present)?;
+        }
 
         for i in 0..K {
             prev_pks[i].pub_key.x.enforce_equal(&external_inputs.0[2*i])?;
             prev_pks[i].pub_key.y.enforce_equal(&external_inputs.0[2*i + 1])?;
+            prev_pk_vars[i].x.enforce_equal(&external_inputs.0[2*i])?;
+            prev_pk_vars[i].y.enforce_equal(&external_inputs.0[2*i + 1])?;
         }
 
         for i in 0..K {
@@ -217,10 +244,10 @@ fn create_new_addressbook(params: &SParams) -> (AddressBook, Keys) {
 }
 
 pub struct TSSPublicParams {
-    pub nova_pp: Vec<u8>,
-    pub nova_vp: Vec<u8>,
-    pub decider_pp: Vec<u8>,
-    pub decider_vp:Vec<u8>,
+    pub nova_pp: NPP,
+    pub nova_vp: NVP,
+    pub decider_pp: DPP,
+    pub decider_vp: DVP,
 }
 
 fn setup(circuit: &TSSFCircuit<MAX_AB_SIZE>) -> Result<TSSPublicParams, Error> {
@@ -232,32 +259,10 @@ fn setup(circuit: &TSSFCircuit<MAX_AB_SIZE>) -> Result<TSSPublicParams, Error> {
     let (nova_pp, nova_vp) = N::preprocess(&mut rng, &nova_preprocess_params)?;
     let (decider_pp, decider_vp) = D::preprocess(&mut rng, ((nova_pp.clone(), nova_vp.clone()), circuit.state_len()))?;
 
-    let mut nova_pp_serialized = vec![];
-    nova_pp.serialize_compressed(&mut nova_pp_serialized)?;
-    println!("Nova ProverParam serialized size: {} bytes", nova_pp_serialized.len());
-
-    let mut nova_vp_serialized = vec![];
-    nova_vp.serialize_compressed(&mut nova_vp_serialized)?;
-    println!("Nova VerifierParam serialized size: {} bytes", nova_vp_serialized.len());
-
-    // Serialize decider_pp and decider_vp
-    let mut decider_pp_serialized = vec![];
-    decider_pp.serialize_compressed(&mut decider_pp_serialized)?;
-    println!("Decider PreprocessorParam serialized size: {} bytes", decider_pp_serialized.len());
-
-    let mut decider_vp_serialized = vec![];
-    decider_vp.serialize_compressed(&mut decider_vp_serialized)?;
-    println!("Decider VerifierParam serialized size: {} bytes", decider_vp_serialized.len());
-
-    Ok(TSSPublicParams {
-        nova_pp: nova_pp_serialized,
-        nova_vp: nova_vp_serialized,
-        decider_pp: decider_pp_serialized,
-        decider_vp: decider_vp_serialized,
-    })
+    Ok(TSSPublicParams { nova_pp, nova_vp, decider_pp, decider_vp })
 }
 
-fn load_params_from_disk() -> Result<TSSPublicParams, std::io::Error> {
+fn load_params_from_disk() -> Result<TSSPublicParams, Error> {
     let nova_pp_path = "/tmp/tss_nova_pp.bin";
     let nova_vp_path = "/tmp/tss_nova_vp.bin";
     let decider_pp_path = "/tmp/tss_decider_pp.bin";
@@ -274,6 +279,15 @@ fn load_params_from_disk() -> Result<TSSPublicParams, std::io::Error> {
         let decider_pp = std::fs::read(decider_pp_path)?;
         let decider_vp = std::fs::read(decider_vp_path)?;
 
+        let nova_pp: NPP = N::pp_deserialize_with_mode(nova_pp.as_slice(), ark_serialize::Compress::Yes, ark_serialize::Validate::Yes, ())?;
+        println!("Nova ProverParam deserialized successfully");
+        let nova_vp: NVP = N::vp_deserialize_with_mode(nova_vp.as_slice(), ark_serialize::Compress::Yes, ark_serialize::Validate::Yes, ())?;
+        println!("Nova VerifierParam deserialized successfully");
+        let decider_pp = DPP::deserialize_compressed(decider_pp.as_slice())?;
+        println!("Decider PreprocessorParam deserialized successfully");
+        let decider_vp = DVP::deserialize_compressed(decider_vp.as_slice())?;
+        println!("Decider VerifierParam deserialized successfully");
+
         Ok(TSSPublicParams {
             nova_pp,
             nova_vp,
@@ -281,15 +295,32 @@ fn load_params_from_disk() -> Result<TSSPublicParams, std::io::Error> {
             decider_vp,
         })
     } else {
-        Err(std::io::Error::new(std::io::ErrorKind::NotFound, "File does not exist"))
+        Err(std::io::Error::new(std::io::ErrorKind::NotFound, "File does not exist")).map_err(|e| Error::from(e))
     }
 }
 
-fn write_params_to_disk(params: &TSSPublicParams) -> Result<(), std::io::Error> {
-    std::fs::write("/tmp/tss_nova_pp.bin", &params.nova_pp)?;
-    std::fs::write("/tmp/tss_nova_vp.bin", &params.nova_vp)?;
-    std::fs::write("/tmp/tss_decider_pp.bin", &params.decider_pp)?;
-    std::fs::write("/tmp/tss_decider_vp.bin", &params.decider_vp)?;
+fn write_params_to_disk(params: &TSSPublicParams) -> Result<(), ark_serialize::SerializationError> {
+    let mut nova_pp_serialized = vec![];
+    params.nova_pp.serialize_compressed(&mut nova_pp_serialized)?;
+    println!("Nova ProverParam serialized size: {} bytes", nova_pp_serialized.len());
+
+    let mut nova_vp_serialized = vec![];
+    params.nova_vp.serialize_compressed(&mut nova_vp_serialized)?;
+    println!("Nova VerifierParam serialized size: {} bytes", nova_vp_serialized.len());
+
+    // Serialize decider_pp and decider_vp
+    let mut decider_pp_serialized = vec![];
+    params.decider_pp.serialize_compressed(&mut decider_pp_serialized)?;
+    println!("Decider PreprocessorParam serialized size: {} bytes", decider_pp_serialized.len());
+
+    let mut decider_vp_serialized = vec![];
+    params.decider_vp.serialize_compressed(&mut decider_vp_serialized)?;
+    println!("Decider VerifierParam serialized size: {} bytes", decider_vp_serialized.len());
+
+    std::fs::write("/tmp/tss_nova_pp.bin", &nova_pp_serialized)?;
+    std::fs::write("/tmp/tss_nova_vp.bin", &nova_vp_serialized)?;
+    std::fs::write("/tmp/tss_decider_pp.bin", &decider_pp_serialized)?;
+    std::fs::write("/tmp/tss_decider_vp.bin", &decider_vp_serialized)?;
     Ok(())
 }
 
@@ -298,32 +329,23 @@ fn main() -> Result<(), Error> {
     let num_steps = 5;
     let F_circuit = TSSFCircuit::<MAX_AB_SIZE>::new(())?;
 
-    let params = load_params_from_disk();
-    if params.is_err() {
-        println!("Params not found on disk, running setup");
-        let params_setup = setup(&F_circuit)?;
-        println!("Storing Nova ProverParams & VerifierParams");
-        write_params_to_disk(&params_setup).unwrap();
-        // let us exit and try loading them next time around
-        std::process::exit(0);
-    }
+    // let params = load_params_from_disk();
+    // if params.is_err() {
+    //     println!("Params not found on disk, running setup");
+    //     let params_setup = setup(&F_circuit)?;
+    //     println!("Storing Nova ProverParams & VerifierParams");
+    //     write_params_to_disk(&params_setup).unwrap();
+    //     // let us exit and try loading them next time around
+    //     std::process::exit(0);
+    // }
 
-    let params = params.unwrap(); // safe because we checked above
-    let nova_pp: NPP = N::pp_deserialize_with_mode(params.nova_pp.as_slice(), ark_serialize::Compress::Yes, ark_serialize::Validate::Yes, ())?;
-    println!("Nova ProverParam deserialized successfully");
-    let nova_vp: NVP = N::vp_deserialize_with_mode(params.nova_vp.as_slice(), ark_serialize::Compress::Yes, ark_serialize::Validate::Yes, ())?;
-    println!("Nova VerifierParam deserialized successfully");
-    let decider_pp = DPP::deserialize_compressed(params.decider_pp.as_slice())?;
-    println!("Decider PreprocessorParam deserialized successfully");
-    let decider_vp = DVP::deserialize_compressed(params.decider_vp.as_slice())?;
-    println!("Decider VerifierParam deserialized successfully");
-    let nova_params = (nova_pp, nova_vp);
+    let params = setup(&F_circuit)?;
 
     println!("Initialize FoldingScheme");
     let schnorr_parameters = S::setup::<_>(&mut thread_rng()).unwrap();
     let (mut prev_ab, mut prev_keys) = create_new_addressbook(&schnorr_parameters);
     let initial_state = vec![hash_addressbook(&prev_ab)];
-    let mut folding_scheme = N::init(&nova_params, F_circuit, initial_state.clone())?;
+    let mut folding_scheme = N::init(&(params.nova_pp.clone(), params.nova_vp.clone()), F_circuit, initial_state.clone())?;
 
     // compute a step of the IVC
     for i in 0..num_steps {
@@ -336,6 +358,9 @@ fn main() -> Result<(), Error> {
         for i in 0..MAX_AB_SIZE {
             external_inputs_at_step.push(next_ab[i].x);
             external_inputs_at_step.push(next_ab[i].y);
+        }
+        for i in 0..MAX_AB_SIZE {
+            external_inputs_at_step.push(Fr::from(i % 2 == 0)); // even signatures present
         }
 
         let message = hash_addressbook(&next_ab).into_bigint().to_bytes_le();
@@ -353,6 +378,14 @@ fn main() -> Result<(), Error> {
             }
         }
 
+        // compute aggregate public key
+        let mut aggregate_pubkey = ark_ed_on_bn254::EdwardsAffine::zero();
+        for i in 0..MAX_AB_SIZE {
+            if i % 2 == 0 {
+                aggregate_pubkey = aggregate_pubkey.add(prev_ab[i]).into_affine();
+            }
+        }
+
         let start = std::time::Instant::now();
         folding_scheme.prove_step(thread_rng(), VecF(external_inputs_at_step.clone()), None)?;
         println!("Nova::prove_step {}: {:?}", i, start.elapsed());
@@ -364,16 +397,16 @@ fn main() -> Result<(), Error> {
     println!("Run the Nova's IVC verifier");
     let ivc_proof = folding_scheme.ivc_proof();
     N::verify(
-        nova_params.1, // Nova's verifier params
+        params.nova_vp, // Nova's verifier params
         ivc_proof,
     )?;
 
     let start = std::time::Instant::now();
-    let proof = D::prove(thread_rng(), decider_pp, folding_scheme.clone())?;
+    let proof = D::prove(thread_rng(), params.decider_pp, folding_scheme.clone())?;
     println!("generated Decider proof: {:?}", start.elapsed());
 
     let verified = D::verify(
-        decider_vp.clone(),
+        params.decider_vp.clone(),
         folding_scheme.i,
         folding_scheme.z_0.clone(),
         folding_scheme.z_i.clone(),
@@ -397,7 +430,7 @@ fn main() -> Result<(), Error> {
     println!("Decider proof serialized size: {} bytes", proof_serialized.len());
 
     let mut decider_vp_serialized = vec![];
-    decider_vp.serialize_compressed(&mut decider_vp_serialized)?;
+    params.decider_vp.serialize_compressed(&mut decider_vp_serialized)?;
 
     let start = std::time::Instant::now();
     let verified = verify_tss(&decider_vp_serialized, &proof_serialized)?;
