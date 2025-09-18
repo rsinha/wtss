@@ -243,6 +243,10 @@ fn create_new_addressbook(params: &SParams) -> (AddressBook, Keys) {
     (ab.try_into().unwrap(), keys.try_into().unwrap())
 }
 
+fn simulate_threshold_signing(present_bits: Vec<bool>, ab: &AddressBook, keys: &Keys, message: &[u8]) {
+
+}
+
 pub struct TSSPublicParams {
     pub nova_pp: NPP,
     pub nova_vp: NVP,

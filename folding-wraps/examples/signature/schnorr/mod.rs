@@ -94,10 +94,7 @@ where
             hash_input.extend_from_slice(&serialize(&prover_commitment));
             hash_input.extend_from_slice(message);
 
-            let hash_digest = Blake2s::digest(&hash_input);
-            assert!(hash_digest.len() >= 32);
-            let mut verifier_challenge = [0u8; 32];
-            verifier_challenge.copy_from_slice(&hash_digest);
+            let verifier_challenge: [u8; 32] = Blake2s::digest(&hash_input).into();
 
             (random_scalar, verifier_challenge)
         };
@@ -106,10 +103,7 @@ where
 
         // k - xe;
         let prover_response = random_scalar - (verifier_challenge_fe * sk.secret_key);
-        let signature = Signature {
-            prover_response,
-            verifier_challenge,
-        };
+        let signature = Signature { prover_response, verifier_challenge };
 
         Ok(signature)
     }
@@ -144,9 +138,6 @@ where
 
         // cast the hash output to get e
         let obtained_verifier_challenge = &Blake2s::digest(&hash_input)[..];
-        // end_timer!(verify_time);
-        // The signature is valid iff the computed verifier challenge is the same as the one
-        // provided in the signature
         Ok(verifier_challenge == obtained_verifier_challenge)
     }
 }
