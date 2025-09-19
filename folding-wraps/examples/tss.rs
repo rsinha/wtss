@@ -159,7 +159,7 @@ impl<const K: usize> FCircuit<Fr> for TSSFCircuit<K> {
             )).unwrap())
             .collect::<Vec<_>>();
 
-        let next_weights = (0..K)
+        let _next_weights = (0..K)
             .map(|i| external_inputs.0[3*K + 3*i + 2].clone())
             .collect::<Vec<_>>();
 
@@ -177,6 +177,20 @@ impl<const K: usize> FCircuit<Fr> for TSSFCircuit<K> {
             _group: PhantomData,
         };
 
+        // compute aggregate weight
+        let mut aggregate_weight = FpVar::<Fr>::new_witness(cs.clone(), || Ok(Fr::from(0)))?;
+        let mut total_weight = FpVar::<Fr>::new_witness(cs.clone(), || Ok(Fr::from(0)))?;
+        for i in 0..K {
+            let zero = FpVar::<Fr>::new_witness(cs.clone(), || Ok(Fr::from(0)))?;
+            let is_present = present_bits[i].is_eq(&UInt::constant(1))?;
+
+            aggregate_weight.add_assign(is_present.select(&prev_weights[i], &zero)?);
+            total_weight.add_assign(&prev_weights[i]);
+        }
+        let three_times_aggregate_weight = &aggregate_weight + &aggregate_weight + &aggregate_weight;
+        total_weight.enforce_cmp(&three_times_aggregate_weight, std::cmp::Ordering::Less, false)?;
+
+        // compute aggregate public key
         let mut aggregate_pubkey = JubJubVar::new_witness(cs.clone(), || Ok(ark_ed_on_bn254::EdwardsAffine::zero()))?;
         for i in 0..K {
             let zero = JubJubVar::new_witness(cs.clone(), || Ok(ark_ed_on_bn254::EdwardsAffine::zero()))?;
