@@ -393,6 +393,8 @@ fn main() -> Result<(), Error> {
     let initial_state = vec![hash_addressbook(&prev_ab)];
     let mut folding_scheme = N::init(&(params.nova_pp.clone(), params.nova_vp.clone()), F_circuit, initial_state.clone())?;
 
+    println!("ledger ID: {}", prettyprint(&initial_state[0].into_bigint().to_bytes_le()));
+
     // compute a step of the IVC
     for i in 0..num_steps {
         let (next_ab, next_keys) = create_new_addressbook(&schnorr_parameters);
@@ -410,6 +412,7 @@ fn main() -> Result<(), Error> {
         }
 
         let message = hash_addressbook(&next_ab).into_bigint().to_bytes_le();
+        println!("Message to be signed at step {}: {}", i, message.iter().map(|b| format!("{:02x}", b)).collect::<Vec<_>>().join(""));
 
         // compute aggregate public key
         let mut aggregate_pubkey = ark_ed_on_bn254::EdwardsAffine::zero();
@@ -480,7 +483,16 @@ fn main() -> Result<(), Error> {
     println!("verify_tss time: {:?}", start.elapsed());
     assert!(verified);
 
+    let ledger_id = proof_data.z_0[0].clone().into_bigint().to_bytes_le();
+    let latest_ab_hash = proof_data.z_i[0].clone().into_bigint().to_bytes_le();
+    println!("genesis AB hash: {}", prettyprint(&ledger_id));
+    println!("latest AB hash: {}", prettyprint(&latest_ab_hash));
+
     Ok(())
+}
+
+fn prettyprint(bytes: &[u8]) -> String {
+    bytes.iter().map(|b| format!("{:02x}", b)).collect::<Vec<_>>().join("")
 }
 
 #[derive(CanonicalSerialize, CanonicalDeserialize)]

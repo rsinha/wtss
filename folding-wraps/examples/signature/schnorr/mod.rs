@@ -155,8 +155,8 @@ pub struct ThresholdSchnorrState<C: CurveGroup> {
 }
 
 pub type ThresholdSchnorrMessage1 = [u8; 32];
-pub type ThresholdSchnorrMessage2<C: CurveGroup> = <C as CurveGroup>::Affine;
-pub type ThresholdSchnorrMessage3<C: CurveGroup> = Signature<C>;
+pub type ThresholdSchnorrMessage2<C> = <C as CurveGroup>::Affine;
+pub type ThresholdSchnorrMessage3<C> = Signature<C>;
 
 impl<C: CurveGroup + Hash> ThresholdSchnorr<C>
 where
@@ -205,12 +205,12 @@ where
         message_to_sign: &[u8],
         round2_messages: &[ThresholdSchnorrMessage2<C>],
         state: ThresholdSchnorrState<C>,
-    ) -> Result<Signature<C>, ThresholdSchnorrError> {
+    ) -> Result<ThresholdSchnorrMessage3<C>, ThresholdSchnorrError> {
         let mut prover_commitment = C::Affine::zero();
         for (i, msg) in round2_messages.into_iter().enumerate() {
             let hash_commitment: [u8; 32] = Blake2s::digest(&serialize(msg)).into();
             if state.round1_messages[i] != hash_commitment {
-                return Err(ThresholdSchnorrError::InvalidInput("Invalid commitment in round 2".to_string()));
+                return Err(ThresholdSchnorrError::InvalidInput);
             }
 
             prover_commitment = prover_commitment.add(msg).into_affine();
@@ -242,7 +242,7 @@ where
         let verifier_challenge = signatures[0].verifier_challenge;
         for sig in signatures.iter() {
             if sig.verifier_challenge != verifier_challenge {
-                return Err(ThresholdSchnorrError::InvalidInput("Mismatched verifier challenges".to_string()));
+                return Err(ThresholdSchnorrError::InvalidInput);
             }
         }
 
@@ -255,7 +255,7 @@ where
 #[derive(Debug)]
 pub enum ThresholdSchnorrError {
     /// Multi-purpose error type for describing invalid inputs
-    InvalidInput(String),
+    InvalidInput,
 }
 
 pub fn serialize<T: CanonicalSerialize>(
