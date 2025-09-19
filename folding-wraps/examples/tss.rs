@@ -54,7 +54,9 @@ use core::borrow::Borrow;
 
 pub const MAX_AB_SIZE: usize = 30;
 pub const MAX_EXT_INPUTS: usize = 7 * MAX_AB_SIZE + 64;
-type AddressBook = [schnorr::PublicKey<JubJub>; MAX_AB_SIZE];
+type Weight = Fr;
+type AddressBookEntry = (schnorr::PublicKey<JubJub>, Weight);
+type AddressBook = [AddressBookEntry; MAX_AB_SIZE];
 type Keys = [schnorr::SecretKey<JubJub>; MAX_AB_SIZE];
 /// The idea here is that eventually we could replace the next line chunk that defines the
 /// `type N = Nova<...>` by using another folding scheme that fulfills the `FoldingScheme`
@@ -191,17 +193,25 @@ impl<const K: usize> FCircuit<Fr> for TSSFCircuit<K> {
 
         let poseidon_config_var = PoseidonCRHParametersVar::new_constant(cs.clone(), poseidon_canonical_config::<Fr>())?;
         let recomputed_prev_state = {
-            let poseidon_input: Vec<FpVar<Fr>> = (0..K)
+            let x_coords: Vec<FpVar<Fr>> = (0..K)
                 .map(|i| external_inputs.0[3*i].clone())
                 .collect();
+            let weights: Vec<FpVar<Fr>> = (0..K)
+                .map(|i| external_inputs.0[3*i + 2].clone())
+                .collect();
+            let poseidon_input: Vec<FpVar<Fr>> = x_coords.into_iter().chain(weights.into_iter()).collect();
             let poseidon_output = PoseidonCRHGadget::evaluate(&poseidon_config_var, &poseidon_input)?;
             poseidon_output.to_constraint_field()?
         };
 
         let computed_next_state = {
-            let poseidon_input: Vec<FpVar<Fr>> = (0..K)
+            let x_coords: Vec<FpVar<Fr>> = (0..K)
                 .map(|i| external_inputs.0[3*K + 3*i].clone())
                 .collect();
+            let weights: Vec<FpVar<Fr>> = (0..K)
+                .map(|i| external_inputs.0[3*K + 3*i + 2].clone())
+                .collect();
+            let poseidon_input: Vec<FpVar<Fr>> = x_coords.into_iter().chain(weights.into_iter()).collect();
             let poseidon_output = PoseidonCRHGadget::evaluate(&poseidon_config_var, &poseidon_input)?;
             poseidon_output.to_constraint_field()?
         };
@@ -231,10 +241,15 @@ impl<const K: usize> FCircuit<Fr> for TSSFCircuit<K> {
 }
 
 fn hash_addressbook(ab: &AddressBook) -> Fr {
-    let poseidon_input: Vec<Fr> = ab
+    let xcoords: Vec<Fr> = ab
         .iter()
-        .map(|pk| pk.x)
+        .map(|abe| abe.0.x)
         .collect();
+    let weights: Vec<Fr> = ab
+        .iter()
+        .map(|abe| abe.1)
+        .collect();
+    let poseidon_input: Vec<Fr> = xcoords.into_iter().chain(weights.into_iter()).collect();
     let out_bytes = PoseidonCRH::evaluate(&poseidon_canonical_config::<Fr>(), poseidon_input).unwrap();
     let out: Vec<Fr> = out_bytes.to_field_elements().unwrap();
     // because of modulus, we actually get two Fr elemeents, but we will only use the first one
@@ -246,8 +261,9 @@ fn create_new_addressbook(params: &SParams) -> (AddressBook, Keys) {
     let mut ab = Vec::new();
     for _i in 0..MAX_AB_SIZE {
         let (pk, sk) = S::keygen(params, &mut thread_rng()).unwrap();
+        let weight = Fr::from(1);
         keys.push(sk);
-        ab.push(pk);
+        ab.push((pk, weight));
     }
     (ab.try_into().unwrap(), keys.try_into().unwrap())
 }
@@ -257,7 +273,7 @@ fn simulate_threshold_signing(present_bits: Vec<bool>, ab: &AddressBook, keys: &
     let mut aggregate_pubkey = ark_ed_on_bn254::EdwardsAffine::zero();
     for i in 0..MAX_AB_SIZE {
         if i % 2 == 0 {
-            aggregate_pubkey = aggregate_pubkey.add(ab[i]).into_affine();
+            aggregate_pubkey = aggregate_pubkey.add(ab[i].0).into_affine();
         }
     }
 
@@ -399,14 +415,14 @@ fn main() -> Result<(), Error> {
         let (next_ab, next_keys) = create_new_addressbook(&schnorr_parameters);
         let mut external_inputs_at_step = Vec::new();
         for i in 0..MAX_AB_SIZE {
-            external_inputs_at_step.push(prev_ab[i].x);
-            external_inputs_at_step.push(prev_ab[i].y);
-            external_inputs_at_step.push(Fr::from(1));
+            external_inputs_at_step.push(prev_ab[i].0.x);
+            external_inputs_at_step.push(prev_ab[i].0.y);
+            external_inputs_at_step.push(prev_ab[i].1);
         }
         for i in 0..MAX_AB_SIZE {
-            external_inputs_at_step.push(next_ab[i].x);
-            external_inputs_at_step.push(next_ab[i].y);
-            external_inputs_at_step.push(Fr::from(1));
+            external_inputs_at_step.push(next_ab[i].0.x);
+            external_inputs_at_step.push(next_ab[i].0.y);
+            external_inputs_at_step.push(next_ab[i].1);
         }
         for i in 0..MAX_AB_SIZE {
             external_inputs_at_step.push(Fr::from(i % 2 == 0)); // even signatures present
@@ -419,7 +435,7 @@ fn main() -> Result<(), Error> {
         let mut aggregate_pubkey = ark_ed_on_bn254::EdwardsAffine::zero();
         for i in 0..MAX_AB_SIZE {
             if i % 2 == 0 {
-                aggregate_pubkey = aggregate_pubkey.add(prev_ab[i]).into_affine();
+                aggregate_pubkey = aggregate_pubkey.add(prev_ab[i].0).into_affine();
             }
         }
         let aggregate_signature = simulate_threshold_signing((0..MAX_AB_SIZE).map(|j| j % 2 == 0).collect(), &prev_ab, &prev_keys, &message);
