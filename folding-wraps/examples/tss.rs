@@ -372,7 +372,7 @@ fn write_params_to_disk(params: &TSSPublicParams) -> Result<(), ark_serialize::S
 
 /// cargo run --release --example tss
 fn main() -> Result<(), Error> {
-    let num_steps = 20;
+    let num_steps = 10;
     let F_circuit = TSSFCircuit::<MAX_AB_SIZE>::new(())?;
 
     // let params = load_params_from_disk();
@@ -391,12 +391,13 @@ fn main() -> Result<(), Error> {
     let schnorr_parameters = S::setup::<_>(&mut thread_rng()).unwrap();
     let (mut prev_ab, mut prev_keys) = create_new_addressbook(&schnorr_parameters);
     let initial_state = vec![hash_addressbook(&prev_ab)];
-    let mut folding_scheme = N::init(&(params.nova_pp.clone(), params.nova_vp.clone()), F_circuit, initial_state.clone())?;
+    let mut ivc_instance = N::init(&(params.nova_pp.clone(), params.nova_vp.clone()), F_circuit, initial_state.clone())?;
 
     println!("ledger ID: {}", prettyprint(&initial_state[0].into_bigint().to_bytes_le()));
 
     // compute a step of the IVC
     for i in 0..num_steps {
+        println!("-------------------------- Step {} --------------------------", i);
         let (next_ab, next_keys) = create_new_addressbook(&schnorr_parameters);
         let mut external_inputs_at_step = Vec::new();
         for i in 0..MAX_AB_SIZE {
@@ -433,19 +434,62 @@ fn main() -> Result<(), Error> {
         }
 
         let start = std::time::Instant::now();
-        folding_scheme.prove_step(thread_rng(), VecF(external_inputs_at_step.clone()), None)?;
+        ivc_instance.prove_step(thread_rng(), VecF(external_inputs_at_step.clone()), None)?;
         println!("Nova::prove_step {}: {:?}", i, start.elapsed());
+
+        if i > 0 {
+            println!("Run the Nova's IVC verifier");
+            let ivc_proof = ivc_instance.ivc_proof();
+            N::verify(params.nova_vp.clone(), ivc_proof.clone())?;
+
+            let folding_scheme = N::from_ivc_proof(ivc_proof.clone(), (), (params.nova_pp.clone(), params.nova_vp.clone()))?;
+
+            let start = std::time::Instant::now();
+            let proof = D::prove(thread_rng(), params.decider_pp.clone(), folding_scheme.clone())?;
+            println!("generated Decider proof: {:?}", start.elapsed());
+
+            let verified = D::verify(
+                params.decider_vp.clone(),
+                folding_scheme.i,
+                folding_scheme.z_0.clone(),
+                folding_scheme.z_i.clone(),
+                &folding_scheme.U_i.get_commitments(),
+                &folding_scheme.u_i.get_commitments(),
+                &proof,
+            )?;
+            assert!(verified);
+
+            // serialize the proof
+            let proof_data = ProofData {
+                i: folding_scheme.i,
+                z_0: folding_scheme.z_0,
+                z_i: folding_scheme.z_i,
+                U_i_commitments: folding_scheme.U_i.get_commitments(),
+                u_i_commitments: folding_scheme.u_i.get_commitments(),
+                proof,
+            };
+            let mut proof_serialized = vec![];
+            proof_data.serialize_compressed(&mut proof_serialized).unwrap();
+            println!("Decider proof serialized size: {} bytes", proof_serialized.len());
+
+            let mut decider_vp_serialized = vec![];
+            params.decider_vp.serialize_compressed(&mut decider_vp_serialized)?;
+
+            assert!(verify_tss(&decider_vp_serialized, &proof_serialized)?);
+        }
 
         prev_ab = next_ab;
         prev_keys = next_keys;
     }
 
+    let folding_scheme = N::from_ivc_proof(ivc_instance.ivc_proof(), (), (params.nova_pp.clone(), params.nova_vp.clone()))?;
+
     println!("Run the Nova's IVC verifier");
-    let ivc_proof = folding_scheme.ivc_proof();
-    N::verify(
-        params.nova_vp, // Nova's verifier params
-        ivc_proof,
-    )?;
+    let ivc_proof = ivc_instance.ivc_proof();
+    N::verify(params.nova_vp, ivc_proof)?;
+    let mut ivc_proof_serialized = Vec::new();
+    ivc_instance.ivc_proof().serialize_compressed(&mut ivc_proof_serialized).unwrap();
+    println!("IVC proof serialized size: {} bytes", ivc_proof_serialized.len());
 
     let start = std::time::Instant::now();
     let proof = D::prove(thread_rng(), params.decider_pp, folding_scheme.clone())?;
