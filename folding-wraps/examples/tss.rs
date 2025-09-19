@@ -53,7 +53,7 @@ use ark_std::fmt::Debug;
 use core::borrow::Borrow;
 
 pub const MAX_AB_SIZE: usize = 30;
-pub const MAX_EXT_INPUTS: usize = 5 * MAX_AB_SIZE + 64;
+pub const MAX_EXT_INPUTS: usize = 7 * MAX_AB_SIZE + 64;
 type AddressBook = [schnorr::PublicKey<JubJub>; MAX_AB_SIZE];
 type Keys = [schnorr::SecretKey<JubJub>; MAX_AB_SIZE];
 /// The idea here is that eventually we could replace the next line chunk that defines the
@@ -129,8 +129,8 @@ impl<const K: usize> FCircuit<Fr> for TSSFCircuit<K> {
         let prev_pks = (0..K)
             .map(|i| SPkVar::new_witness(cs.clone(), || Ok(
                 ark_ed_on_bn254::EdwardsAffine::new(
-                    external_inputs.0[2*i].value()?,
-                    external_inputs.0[2*i + 1].value()?
+                    external_inputs.0[3*i + 0].value()?,
+                    external_inputs.0[3*i + 1].value()?
                 )
             )).unwrap())
             .collect::<Vec<_>>();
@@ -138,30 +138,38 @@ impl<const K: usize> FCircuit<Fr> for TSSFCircuit<K> {
         let prev_pk_vars = (0..K)
             .map(|i| JubJubVar::new_witness(cs.clone(), || Ok(
                 ark_ed_on_bn254::EdwardsAffine::new(
-                    external_inputs.0[2*i].value()?,
-                    external_inputs.0[2*i + 1].value()?
+                    external_inputs.0[3*i + 0].value()?,
+                    external_inputs.0[3*i + 1].value()?
                 )
             )).unwrap())
+            .collect::<Vec<_>>();
+
+        let prev_weights = (0..K)
+            .map(|i| external_inputs.0[3*i + 2].clone())
             .collect::<Vec<_>>();
 
         let next_pks = (0..K)
             .map(|i| SPkVar::new_witness(cs.clone(), || Ok(
                 ark_ed_on_bn254::EdwardsAffine::new(
-                    external_inputs.0[2*K + 2*i].value()?,
-                    external_inputs.0[2*K + 2*i + 1].value()?
+                    external_inputs.0[3*K + 3*i + 0].value()?,
+                    external_inputs.0[3*K + 3*i + 1].value()?
                 )
             )).unwrap())
             .collect::<Vec<_>>();
 
+        let next_weights = (0..K)
+            .map(|i| external_inputs.0[3*K + 3*i + 2].clone())
+            .collect::<Vec<_>>();
+
         let present_bits = (0..K)
-            .map(|i| external_inputs.0[4*K + i].to_bytes_le().unwrap()[0].clone())
+            .map(|i| external_inputs.0[6*K + i].to_bytes_le().unwrap()[0].clone())
             .collect::<Vec<_>>();
 
         let aggregate_signature = SSigVar {
-            verifier_challenge: (5*K..5*K + 32)
+            verifier_challenge: (7*K..7*K + 32)
                 .map(|j| external_inputs.0[j].to_bytes_le().unwrap()[0].clone())
                 .collect(),
-            prover_response: (5*K + 32..5*K + 64)
+            prover_response: (7*K + 32..7*K + 64)
                 .map(|j| external_inputs.0[j].to_bytes_le().unwrap()[0].clone())
                 .collect(),
             _group: PhantomData,
@@ -184,7 +192,7 @@ impl<const K: usize> FCircuit<Fr> for TSSFCircuit<K> {
         let poseidon_config_var = PoseidonCRHParametersVar::new_constant(cs.clone(), poseidon_canonical_config::<Fr>())?;
         let recomputed_prev_state = {
             let poseidon_input: Vec<FpVar<Fr>> = (0..K)
-                .map(|i| external_inputs.0[2*i].clone())
+                .map(|i| external_inputs.0[3*i].clone())
                 .collect();
             let poseidon_output = PoseidonCRHGadget::evaluate(&poseidon_config_var, &poseidon_input)?;
             poseidon_output.to_constraint_field()?
@@ -192,7 +200,7 @@ impl<const K: usize> FCircuit<Fr> for TSSFCircuit<K> {
 
         let computed_next_state = {
             let poseidon_input: Vec<FpVar<Fr>> = (0..K)
-                .map(|i| external_inputs.0[2*K + 2*i].clone())
+                .map(|i| external_inputs.0[3*K + 3*i].clone())
                 .collect();
             let poseidon_output = PoseidonCRHGadget::evaluate(&poseidon_config_var, &poseidon_input)?;
             poseidon_output.to_constraint_field()?
@@ -206,15 +214,15 @@ impl<const K: usize> FCircuit<Fr> for TSSFCircuit<K> {
         valid_sig_var.enforce_equal(&Boolean::<Fr>::TRUE)?;
 
         for i in 0..K {
-            prev_pks[i].pub_key.x.enforce_equal(&external_inputs.0[2*i])?;
-            prev_pks[i].pub_key.y.enforce_equal(&external_inputs.0[2*i + 1])?;
-            prev_pk_vars[i].x.enforce_equal(&external_inputs.0[2*i])?;
-            prev_pk_vars[i].y.enforce_equal(&external_inputs.0[2*i + 1])?;
+            prev_pks[i].pub_key.x.enforce_equal(&external_inputs.0[3*i + 0])?;
+            prev_pks[i].pub_key.y.enforce_equal(&external_inputs.0[3*i + 1])?;
+            prev_pk_vars[i].x.enforce_equal(&external_inputs.0[3*i + 0])?;
+            prev_pk_vars[i].y.enforce_equal(&external_inputs.0[3*i + 1])?;
         }
 
         for i in 0..K {
-            next_pks[i].pub_key.x.enforce_equal(&external_inputs.0[2*K + 2*i])?;
-            next_pks[i].pub_key.y.enforce_equal(&external_inputs.0[2*K + 2*i + 1])?;
+            next_pks[i].pub_key.x.enforce_equal(&external_inputs.0[3*K + 3*i + 0])?;
+            next_pks[i].pub_key.y.enforce_equal(&external_inputs.0[3*K + 3*i + 1])?;
         }
 
         recomputed_prev_state[0].enforce_equal(&z_i[0])?;
@@ -375,16 +383,6 @@ fn main() -> Result<(), Error> {
     let num_steps = 10;
     let F_circuit = TSSFCircuit::<MAX_AB_SIZE>::new(())?;
 
-    // let params = load_params_from_disk();
-    // if params.is_err() {
-    //     println!("Params not found on disk, running setup");
-    //     let params_setup = setup(&F_circuit)?;
-    //     println!("Storing Nova ProverParams & VerifierParams");
-    //     write_params_to_disk(&params_setup).unwrap();
-    //     // let us exit and try loading them next time around
-    //     std::process::exit(0);
-    // }
-
     let params = setup(&F_circuit)?;
 
     println!("Initialize FoldingScheme");
@@ -403,17 +401,19 @@ fn main() -> Result<(), Error> {
         for i in 0..MAX_AB_SIZE {
             external_inputs_at_step.push(prev_ab[i].x);
             external_inputs_at_step.push(prev_ab[i].y);
+            external_inputs_at_step.push(Fr::from(1));
         }
         for i in 0..MAX_AB_SIZE {
             external_inputs_at_step.push(next_ab[i].x);
             external_inputs_at_step.push(next_ab[i].y);
+            external_inputs_at_step.push(Fr::from(1));
         }
         for i in 0..MAX_AB_SIZE {
             external_inputs_at_step.push(Fr::from(i % 2 == 0)); // even signatures present
         }
 
         let message = hash_addressbook(&next_ab).into_bigint().to_bytes_le();
-        println!("Message to be signed at step {}: {}", i, message.iter().map(|b| format!("{:02x}", b)).collect::<Vec<_>>().join(""));
+        println!("Message to be signed at step {}: {}", i, prettyprint(message.as_slice()));
 
         // compute aggregate public key
         let mut aggregate_pubkey = ark_ed_on_bn254::EdwardsAffine::zero();
