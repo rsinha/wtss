@@ -10,6 +10,7 @@ use signature::{*};
 
 use std::ops::{Add, AddAssign};
 use ark_crypto_primitives::crh::{
+    sha256::Sha256,
     poseidon::constraints::{CRHGadget as PoseidonCRHGadget, CRHParametersVar as PoseidonCRHParametersVar},
     poseidon::CRH as PoseidonCRH,
     CRHSchemeGadget, CRHScheme
@@ -17,7 +18,13 @@ use ark_crypto_primitives::crh::{
 use ark_ec::CurveGroup;
 use ark_ff::{BigInteger, PrimeField, ToConstraintField};
 use ark_r1cs_std::{
-    alloc::{AllocVar, AllocationMode}, convert::{ToBytesGadget, ToConstraintFieldGadget}, eq::EqGadget, fields::fp::FpVar, prelude::Boolean, uint::UInt, GR1CSVar
+    alloc::{AllocVar, AllocationMode},
+    convert::{ToBytesGadget, ToConstraintFieldGadget},
+    eq::EqGadget,
+    fields::fp::FpVar,
+    prelude::Boolean,
+    uint::UInt,
+    GR1CSVar
 };
 use ark_groth16::{Groth16};
 use ark_relations::gr1cs::{Namespace, ConstraintSystemRef, SynthesisError};
@@ -53,7 +60,7 @@ use ark_std::fmt::Debug;
 use core::borrow::Borrow;
 
 pub const MAX_AB_SIZE: usize = 30;
-pub const MAX_EXT_INPUTS: usize = 7 * MAX_AB_SIZE + 64;
+pub const MAX_EXT_INPUTS: usize = 7 * MAX_AB_SIZE + 64 + 1;
 type Weight = Fr;
 type AddressBookEntry = (schnorr::PublicKey<JubJub>, Weight);
 type AddressBook = [AddressBookEntry; MAX_AB_SIZE];
@@ -117,7 +124,7 @@ impl<const K: usize> FCircuit<Fr> for TSSFCircuit<K> {
         Ok(Self { _f: PhantomData })
     }
     fn state_len(&self) -> usize {
-        1
+        2
     }
     /// generates the constraints for the step of F for the given z_i
     fn generate_step_constraints(
@@ -176,6 +183,8 @@ impl<const K: usize> FCircuit<Fr> for TSSFCircuit<K> {
                 .collect(),
             _group: PhantomData,
         };
+
+        let tss_vk_hash = external_inputs.0[7*K + 64].clone();
 
         // compute aggregate weight
         let mut aggregate_weight = FpVar::<Fr>::new_witness(cs.clone(), || Ok(Fr::from(0)))?;
@@ -247,7 +256,12 @@ impl<const K: usize> FCircuit<Fr> for TSSFCircuit<K> {
         let schnorr_parameters = S::setup::<_>(&mut thread_rng()).unwrap();
         let parameters_var = <SVerifyGadget as SigVerifyGadget<S, Fr>>
             ::ParametersVar::new_constant(cs.clone(), schnorr_parameters)?;
-        let msg_var = computed_next_state[0].to_bytes_le()?;
+        let next_ab_hash = computed_next_state[0].to_bytes_le()?;
+        let tss_vk_hash = external_inputs.0[7*K + 64].clone();
+        let msg_var = next_ab_hash
+            .into_iter()
+            .chain(tss_vk_hash.to_bytes_le()?)
+            .collect::<Vec<_>>();
         let valid_sig_var = <SVerifyGadget as SigVerifyGadget<S, Fr>>::verify(&parameters_var, &aggregate_pubkey_var, &msg_var, &aggregate_signature)?;
         valid_sig_var.enforce_equal(&Boolean::<Fr>::TRUE)?;
 
@@ -262,10 +276,21 @@ impl<const K: usize> FCircuit<Fr> for TSSFCircuit<K> {
             next_pks[i].pub_key.x.enforce_equal(&external_inputs.0[3*K + 3*i + 0])?;
             next_pks[i].pub_key.y.enforce_equal(&external_inputs.0[3*K + 3*i + 1])?;
         }
-
         recomputed_prev_state[0].enforce_equal(&z_i[0])?;
-        Ok(vec![computed_next_state[0].clone()])
+
+        Ok(vec![computed_next_state[0].clone(), tss_vk_hash])
     }
+}
+
+
+fn hash_hints_vk(vk_bytes: &[u8]) -> Fr {
+    let hash_bytes = Sha256::evaluate(&(), vk_bytes).unwrap();
+    let tss_vk_hash = Fr::from_le_bytes_mod_order(&hash_bytes);
+
+    let out_bytes = PoseidonCRH::evaluate(&poseidon_canonical_config::<Fr>(), vec![tss_vk_hash]).unwrap();
+    let out: Vec<Fr> = out_bytes.to_field_elements().unwrap();
+    // because of modulus, we actually get two Fr elemeents, but we will only use the first one
+    out[0]
 }
 
 fn hash_addressbook(ab: &AddressBook) -> Fr {
@@ -439,7 +464,8 @@ fn main() -> Result<(), Error> {
     println!("Initialize FoldingScheme");
     let schnorr_parameters = S::setup::<_>(&mut thread_rng()).unwrap();
     let (mut prev_ab, mut prev_keys) = create_new_addressbook(&schnorr_parameters);
-    let initial_state = vec![hash_addressbook(&prev_ab)];
+    let prev_tss_vk = [0u8; 1280]; // placeholder for TSS vk bytes
+    let initial_state = vec![hash_addressbook(&prev_ab), hash_hints_vk(&prev_tss_vk)];
     let mut ivc_instance = N::init(&(params.nova_pp.clone(), params.nova_vp.clone()), F_circuit, initial_state.clone())?;
 
     println!("ledger ID: {}", prettyprint(&initial_state[0].into_bigint().to_bytes_le()));
@@ -448,6 +474,8 @@ fn main() -> Result<(), Error> {
     for i in 0..num_steps {
         println!("-------------------------- Step {} --------------------------", i);
         let (next_ab, next_keys) = create_new_addressbook(&schnorr_parameters);
+        let next_tss_vk = [0u8; 1280]; // placeholder for TSS vk bytes
+
         let mut external_inputs_at_step = Vec::new();
         for i in 0..MAX_AB_SIZE {
             external_inputs_at_step.push(prev_ab[i].0.x);
@@ -463,8 +491,13 @@ fn main() -> Result<(), Error> {
             external_inputs_at_step.push(Fr::from(i % 2 == 0)); // even signatures present
         }
 
-        let message = hash_addressbook(&next_ab).into_bigint().to_bytes_le();
+        let message: Vec<u8> = [
+            hash_addressbook(&next_ab).into_bigint().to_bytes_le(), 
+            hash_hints_vk(&next_tss_vk).into_bigint().to_bytes_le()
+        ].concat();
         println!("Message to be signed at step {}: {}", i, prettyprint(message.as_slice()));
+        println!("Next AB hash: {}", prettyprint(&hash_addressbook(&next_ab).into_bigint().to_bytes_le()));
+        println!("Next TSS vk hash: {}", prettyprint(&hash_hints_vk(&next_tss_vk).into_bigint().to_bytes_le()));
 
         // compute aggregate public key
         let mut aggregate_pubkey = ark_ed_on_bn254::EdwardsAffine::zero();
@@ -473,6 +506,7 @@ fn main() -> Result<(), Error> {
                 aggregate_pubkey = aggregate_pubkey.add(prev_ab[i].0).into_affine();
             }
         }
+
         let aggregate_signature = simulate_threshold_signing((0..MAX_AB_SIZE).map(|j| j % 2 == 0).collect(), &prev_ab, &prev_keys, &message);
         assert!(S::verify(&schnorr_parameters, &aggregate_pubkey, &message, &aggregate_signature).unwrap());
         let verifier_challenge = aggregate_signature.verifier_challenge;
@@ -483,6 +517,8 @@ fn main() -> Result<(), Error> {
         for j in 0..32 {
             external_inputs_at_step.push(Fr::from_le_bytes_mod_order(&[prover_response[j]]));
         }
+
+        external_inputs_at_step.push(hash_hints_vk(&next_tss_vk));
 
         let start = std::time::Instant::now();
         ivc_instance.prove_step(thread_rng(), VecF(external_inputs_at_step.clone()), None)?;
@@ -580,8 +616,10 @@ fn main() -> Result<(), Error> {
 
     let ledger_id = proof_data.z_0[0].clone().into_bigint().to_bytes_le();
     let latest_ab_hash = proof_data.z_i[0].clone().into_bigint().to_bytes_le();
+    let latest_tss_vk_hash = proof_data.z_i[1].clone().into_bigint().to_bytes_le();
     println!("genesis AB hash: {}", prettyprint(&ledger_id));
     println!("latest AB hash: {}", prettyprint(&latest_ab_hash));
+    println!("latest TSS vk hash: {}", prettyprint(&latest_tss_vk_hash));
 
     Ok(())
 }
