@@ -2,7 +2,6 @@
 members = [
     "folding-schemes",
     "solidity-verifiers",
-    "cli",
 ]
 resolver = "2"
 
