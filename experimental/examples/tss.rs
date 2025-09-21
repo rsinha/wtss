@@ -184,8 +184,6 @@ impl<const K: usize> FCircuit<Fr> for TSSFCircuit<K> {
             _group: PhantomData,
         };
 
-        let tss_vk_hash = external_inputs.0[7*K + 64].clone();
-
         // compute aggregate weight
         let mut aggregate_weight = FpVar::<Fr>::new_witness(cs.clone(), || Ok(Fr::from(0)))?;
         let mut total_weight = FpVar::<Fr>::new_witness(cs.clone(), || Ok(Fr::from(0)))?;
