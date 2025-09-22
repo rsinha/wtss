@@ -74,15 +74,3 @@ harness = false
 [[example]]
 name = "tss"
 path = "../examples/tss.rs"
-
-[[example]]
-name = "sha256"
-path = "../examples/sha256.rs"
-
-[[example]]
-name = "multi_inputs"
-path = "../examples/multi_inputs.rs"
-
-[[example]]
-name = "external_inputs"
-path = "../examples/external_inputs.rs"
