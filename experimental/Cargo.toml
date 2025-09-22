@@ -38,8 +38,6 @@ repository = "https://github.com/privacy-scaling-explorations/sonobe/"
 
 [workspace.dependencies]
 askama = { version = "0.12.0", default-features = false }
-clap = { version = "4.4" }
-clap-verbosity-flag = { version = "2.1" }
 criterion = { version = "0.5" }
 env_logger = { version = "0.10" }
 getrandom = { version = "0.2" }
@@ -55,7 +53,6 @@ rayon = { version = "1" }
 revm = { version = "19.5.0", default-features = false }
 rust-crypto = { version = "0.2" }
 thiserror = { version = "1.0" }
-tokio = "1.44.1"
 blake2 = { version = "0.9" }
 digest = "0.9"
 
