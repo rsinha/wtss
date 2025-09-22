@@ -56,11 +56,6 @@ parallel = []
 light-test = []
 
 
-[[bench]]
-name = "nova"
-path = "../benches/nova.rs"
-harness = false
-
 [[example]]
 name = "tss"
 path = "../examples/tss.rs"
