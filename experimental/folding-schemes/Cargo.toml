@@ -61,16 +61,6 @@ name = "nova"
 path = "../benches/nova.rs"
 harness = false
 
-[[bench]]
-name = "hypernova"
-path = "../benches/hypernova.rs"
-harness = false
-
-[[bench]]
-name = "protogalaxy"
-path = "../benches/protogalaxy.rs"
-harness = false
-
 [[example]]
 name = "tss"
 path = "../examples/tss.rs"
