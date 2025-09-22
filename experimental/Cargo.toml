@@ -2,7 +2,6 @@
 members = [
     "folding-schemes",
     "solidity-verifiers",
-    "cli",
 ]
 resolver = "2"
 
@@ -32,16 +31,12 @@ ark-vesta = { git = "https://github.com/arkworks-rs/algebra" }
 ark-mnt4-298 = { git = "https://github.com/arkworks-rs/algebra" }
 ark-mnt6-298 = { git = "https://github.com/arkworks-rs/algebra" }
 
-[patch."https://github.com/arkworks-rs/circom-compat"]
-ark-circom = { git = "https://github.com/dmpierre/circom-compat", rev = "0dfd773c" }
-
 [workspace.package]
 edition = "2021"
 license = "MIT"
 repository = "https://github.com/privacy-scaling-explorations/sonobe/"
 
 [workspace.dependencies]
-acvm = { git = "https://github.com/winderica/noir", rev = "fc9e99", default-features = false } # "arkworks-next" branch
 askama = { version = "0.12.0", default-features = false }
 clap = { version = "4.4" }
 clap-verbosity-flag = { version = "2.1" }
@@ -49,7 +44,6 @@ criterion = { version = "0.5" }
 env_logger = { version = "0.10" }
 getrandom = { version = "0.2" }
 log = { version = "0.4" }
-noname = { git = "https://github.com/dmpierre/noname", rev = "c34f17" }
 num-bigint = { version = "0.4.3" }
 num-integer = { version = "0.1" }
 pprof = { version = "0.13" }
@@ -62,14 +56,12 @@ revm = { version = "19.5.0", default-features = false }
 rust-crypto = { version = "0.2" }
 thiserror = { version = "1.0" }
 tokio = "1.44.1"
-wasmer = { version = "6.1.0-rc.2", default-features = false }
 blake2 = { version = "0.9" }
 digest = "0.9"
 
 # Arkworks family
 ark-bn254 = { version = "^0.5.0", default-features = false }
 ark-ed-on-bn254 = { version = "^0.5.0", default-features = false }
-ark-circom = { git = "https://github.com/arkworks-rs/circom-compat", default-features = false }
 ark-crypto-primitives = { version = "^0.5.0", default-features = false }
 ark-ec = { version = "^0.5.0", default-features = false }
 ark-ff = { version = "^0.5.0", default-features = false }
