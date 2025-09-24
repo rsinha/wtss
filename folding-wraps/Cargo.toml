@@ -3,7 +3,7 @@ members = [
     "lib/folding-schemes",
     "lib/solidity-verifiers",
     "lib/experimental-frontends",
-    "tss",
+    "tss-simulation",
 ]
 resolver = "2"
 
