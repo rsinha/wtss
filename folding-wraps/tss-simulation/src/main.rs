@@ -455,7 +455,7 @@ fn _write_params_to_disk(params: &TSSPublicParams) -> Result<(), ark_serialize::
 /// cargo run --release --example tss
 fn main() -> Result<(), Error> {
     println!("Running TSS simulation");
-    let num_steps = 10;
+    let num_steps = 5;
     let F_circuit = TSSFCircuit::<MAX_AB_SIZE>::new(())?;
 
     let params = setup(&F_circuit)?;
