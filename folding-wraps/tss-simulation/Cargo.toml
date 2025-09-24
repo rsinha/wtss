@@ -20,25 +20,13 @@ ark-groth16 = { workspace = true }
 ark-bn254 = { workspace = true, features = ["r1cs"] }
 ark-ed-on-bn254 = { workspace = true, features = ["r1cs"] }
 ark-grumpkin = { workspace = true, features = ["r1cs"] }
-thiserror = { workspace = true }
-rayon = { workspace = true }
 num-bigint = { workspace = true, features = ["rand"] }
 num-integer = { workspace = true }
 sha3 = { workspace = true }
 blake2 = { workspace = true }
 digest = { workspace = true }
-log = { workspace = true }
-ark-pallas = { workspace = true, features = ["curve", "r1cs"] }
-ark-vesta = { workspace = true, features = ["r1cs"] }
-ark-mnt4-298 = { workspace = true, features = ["curve", "r1cs"] }
-ark-mnt6-298 = { workspace = true, features = ["r1cs"] }
 
 folding-schemes = { workspace = true }
-
-# for benchmarks
-[target.'cfg(not(target_arch = "wasm32"))'.dependencies]
-criterion = { workspace = true }
-pprof = { workspace = true, features = ["criterion", "flamegraph"] }
 
 [features]
 default = ["parallel"]
