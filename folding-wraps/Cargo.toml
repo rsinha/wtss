@@ -1,6 +1,7 @@
 [workspace]
 members = [
     "lib/folding-schemes",
+    "lib/wraps",
     "tss-simulation",
 ]
 resolver = "2"
