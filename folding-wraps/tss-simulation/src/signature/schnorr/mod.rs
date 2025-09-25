@@ -2,15 +2,14 @@ use super::SignatureScheme;
 
 use ark_crypto_primitives::Error;
 use ark_ec::{CurveGroup, AffineRepr};
-use ark_ff::fields::PrimeField;
-use ark_ff::UniformRand;
+use ark_ff::{fields::PrimeField, UniformRand};
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
-use ark_std::rand::Rng;
-use ark_std::{hash::Hash, marker::PhantomData, vec::Vec};
-use ark_std::ops::*;
-use ark_std::Zero;
+use ark_std::{Zero, rand::Rng, hash::Hash, marker::PhantomData, vec::Vec, ops::*};
 use blake2::Blake2s;
 use digest::Digest;
+use ark_std::rand::SeedableRng;
+
+use crate::utils::serialize;
 
 pub mod constraints;
 
@@ -26,11 +25,7 @@ pub struct Parameters<C: CurveGroup> {
 
 pub type PublicKey<C> = <C as CurveGroup>::Affine;
 
-#[derive(Clone, Default, Debug, CanonicalDeserialize, CanonicalSerialize)]
-pub struct SecretKey<C: CurveGroup> {
-    pub secret_key: C::ScalarField,
-    pub public_key: PublicKey<C>,
-}
+pub type SecretKey<C> = <<C as CurveGroup>::Affine as AffineRepr>::ScalarField;
 
 #[derive(Clone, Default, Debug, CanonicalDeserialize, CanonicalSerialize)]
 pub struct Signature<C: CurveGroup> {
@@ -47,41 +42,37 @@ where
     type SecretKey = SecretKey<C>;
     type Signature = Signature<C>;
 
-    fn setup<R: Rng>(_rng: &mut R) -> Result<Self::Parameters, Error> {
+    fn setup(_entropy: [u8; 32]) -> Result<Self::Parameters, Error> {
         let salt = None;
         let generator = C::generator().into();
 
         Ok(Parameters { generator, salt })
     }
 
-    fn keygen<R: Rng>(
+    fn keygen(
         parameters: &Self::Parameters,
-        rng: &mut R,
+        entropy: [u8; 32],
     ) -> Result<(Self::PublicKey, Self::SecretKey), Error> {
-        // Secret is a random scalar x
-        // the pubkey is y = xG
-        let secret_key = C::ScalarField::rand(rng);
+        let mut csprng = ark_std::rand::rngs::StdRng::from_seed(entropy);
+        // secret is a random scalar x, and the pubkey is y = xG
+        let secret_key = C::ScalarField::rand(&mut csprng);
         let public_key = parameters.generator.mul(secret_key).into();
 
-        Ok((
-            public_key,
-            SecretKey {
-                secret_key,
-                public_key,
-            },
-        ))
+        Ok(( public_key, secret_key ))
     }
 
-    fn sign<R: Rng>(
+    fn sign(
         parameters: &Self::Parameters,
         sk: &Self::SecretKey,
         message: &[u8],
-        rng: &mut R,
+        entropy: [u8; 32],
     ) -> Result<Self::Signature, Error> {
+        let mut csprng = ark_std::rand::rngs::StdRng::from_seed(entropy);
         // (k, e);
         let (random_scalar, verifier_challenge) = {
+            let public_key = parameters.generator.mul(sk).into();
             // Sample a random scalar `k` from the prime scalar field.
-            let random_scalar: C::ScalarField = C::ScalarField::rand(rng);
+            let random_scalar: C::ScalarField = C::ScalarField::rand(&mut csprng);
             // Commit to the random scalar via r := k · G.
             // This is the prover's first msg in the Sigma protocol.
             let prover_commitment = parameters.generator.mul(random_scalar).into_affine();
@@ -92,7 +83,7 @@ where
             if parameters.salt != None {
                 hash_input.extend_from_slice(&parameters.salt.unwrap());
             }
-            hash_input.extend_from_slice(&serialize(&sk.public_key));
+            hash_input.extend_from_slice(&serialize(&public_key));
             hash_input.extend_from_slice(&serialize(&prover_commitment));
             hash_input.extend_from_slice(message);
 
@@ -104,7 +95,7 @@ where
         let verifier_challenge_fe = C::ScalarField::from_le_bytes_mod_order(&verifier_challenge);
 
         // k - xe;
-        let prover_response = random_scalar - (verifier_challenge_fe * sk.secret_key);
+        let prover_response = random_scalar - (verifier_challenge_fe * sk);
         let signature = Signature { prover_response, verifier_challenge };
 
         Ok(signature)
@@ -148,73 +139,33 @@ pub struct ThresholdSchnorr<C: CurveGroup> {
     _group: PhantomData<C>,
 }
 
-#[derive(Clone, Debug)]
-pub struct ThresholdSchnorrState<C: CurveGroup> {
-    signing_key: C::ScalarField,
-    random_scalar: C::ScalarField,
-    round1_messages: Vec<ThresholdSchnorrMessage1>,
-}
-
 pub type ThresholdSchnorrMessage1 = [u8; 32];
 pub type ThresholdSchnorrMessage2<C> = <C as CurveGroup>::Affine;
 pub type ThresholdSchnorrMessage3<C> = Signature<C>;
 
-impl<C: CurveGroup + Hash> ThresholdSchnorr<C>
-where
-    C::ScalarField: PrimeField,
+impl<C: CurveGroup + Hash> ThresholdSchnorr<C> where C::ScalarField: PrimeField,
 {
-
-    pub fn initiate_signing_session<R: Rng>(
-        sk: &SecretKey<C>,
-        rng: &mut R,
-    ) -> ThresholdSchnorrState<C> {
-        ThresholdSchnorrState {
-            signing_key: sk.secret_key,
-            random_scalar: C::ScalarField::rand(rng),
-            round1_messages: vec![],
-        }
+    fn get_pseudorandom_scalar() -> C::ScalarField {
+        let entropy = [0u8; 32]; // TODO: replace with real musig
+        let mut csprng = ark_std::rand::rngs::StdRng::from_seed(entropy);
+        C::ScalarField::rand(&mut csprng)
     }
 
-    pub fn sign_round1(
-        parameters: &Parameters<C>,
-        state: ThresholdSchnorrState<C>,
-    ) -> Result<(ThresholdSchnorrMessage1, ThresholdSchnorrState<C>), Error> {
-        let prover_commitment = parameters.generator.mul(state.random_scalar).into_affine();
-        let hash_commitment: [u8; 32] = Blake2s::digest(&serialize(&prover_commitment)).into();
-
-        Ok((hash_commitment, state))
-    }
-
-    pub fn sign_round2(
+    fn compute_challenge(
         parameters: &Parameters<C>,
         round1_messages: &[ThresholdSchnorrMessage1],
-        state: ThresholdSchnorrState<C>,
-    ) -> Result<(ThresholdSchnorrMessage2<C>, ThresholdSchnorrState<C>), Error> {
-        let prover_commitment = parameters.generator.mul(state.random_scalar).into_affine();
-
-        let state = ThresholdSchnorrState::<C> {
-            round1_messages: round1_messages.to_vec(),
-            ..state
-        };
-
-        Ok((prover_commitment, state))
-    }
-
-    pub fn sign_round3(
-        parameters: &Parameters<C>,
+        round2_messages: &[ThresholdSchnorrMessage2<C>],
         aggregate_pk: &PublicKey<C>,
         message_to_sign: &[u8],
-        round2_messages: &[ThresholdSchnorrMessage2<C>],
-        state: ThresholdSchnorrState<C>,
-    ) -> Result<ThresholdSchnorrMessage3<C>, ThresholdSchnorrError> {
-        let mut prover_commitment = C::Affine::zero();
+    ) -> Result<[u8; 32], ThresholdSchnorrError> {
+        let mut aggregate_prover_commitment = C::Affine::zero();
         for (i, msg) in round2_messages.into_iter().enumerate() {
             let hash_commitment: [u8; 32] = Blake2s::digest(&serialize(msg)).into();
-            if state.round1_messages[i] != hash_commitment {
+            if round1_messages[i] != hash_commitment {
                 return Err(ThresholdSchnorrError::InvalidInput);
             }
 
-            prover_commitment = prover_commitment.add(msg).into_affine();
+            aggregate_prover_commitment = aggregate_prover_commitment.add(msg).into_affine();
         }
 
         // Hash everything to get verifier challenge.
@@ -224,30 +175,85 @@ where
             hash_input.extend_from_slice(&parameters.salt.unwrap());
         }
         hash_input.extend_from_slice(&serialize(&aggregate_pk));
-        hash_input.extend_from_slice(&serialize(&prover_commitment));
+        hash_input.extend_from_slice(&serialize(&aggregate_prover_commitment));
         hash_input.extend_from_slice(message_to_sign);
         let verifier_challenge: [u8; 32] = Blake2s::digest(&hash_input).into();
 
+        Ok(verifier_challenge)
+    }
+
+    pub fn sign_round1(
+        parameters: &Parameters<C>,
+    ) -> Result<ThresholdSchnorrMessage1, Error> {
+        let random_scalar = Self::get_pseudorandom_scalar();
+
+        let prover_commitment = parameters.generator.mul(random_scalar).into_affine();
+        let hash_commitment: [u8; 32] = Blake2s::digest(&serialize(&prover_commitment)).into();
+
+        Ok(hash_commitment)
+    }
+
+    pub fn sign_round2(
+        parameters: &Parameters<C>,
+        _round1_messages: &[ThresholdSchnorrMessage1],
+    ) -> Result<ThresholdSchnorrMessage2<C>, Error> {
+        let random_scalar = Self::get_pseudorandom_scalar();
+        let prover_commitment = parameters.generator.mul(random_scalar).into_affine();
+
+        Ok(prover_commitment)
+    }
+
+    pub fn sign_round3(
+        parameters: &Parameters<C>,
+        message_to_sign: &[u8],
+        sk: &SecretKey<C>,
+        public_keys: &[PublicKey<C>],
+        round1_messages: &[ThresholdSchnorrMessage1],
+        round2_messages: &[ThresholdSchnorrMessage2<C>],
+    ) -> Result<ThresholdSchnorrMessage3<C>, ThresholdSchnorrError> {
+        let aggregate_pk = public_keys.iter().fold(C::Affine::zero(), |acc, pk| (acc + pk).into_affine());
+
+        let verifier_challenge = Self::compute_challenge(parameters, round1_messages, round2_messages, &aggregate_pk, message_to_sign)?;
         let verifier_challenge_fe = C::ScalarField::from_le_bytes_mod_order(&verifier_challenge);
 
+        let random_scalar = Self::get_pseudorandom_scalar();
+
         // k - xe;
-        let prover_response = state.random_scalar - (verifier_challenge_fe * state.signing_key);
+        let prover_response = random_scalar - (verifier_challenge_fe * sk);
         let signature = Signature { prover_response, verifier_challenge };
 
         Ok(signature)
     }
 
-    pub fn finish_signing_session(
-        signatures: &[Signature<C>],
+    pub fn aggregate(
+        parameters: &Parameters<C>,
+        message_to_sign: &[u8],
+        public_keys: &[PublicKey<C>],
+        round1_messages: &[ThresholdSchnorrMessage1],
+        round2_messages: &[ThresholdSchnorrMessage2<C>],
+        round3_messages: &[ThresholdSchnorrMessage3<C>],
     ) -> Result<Signature<C>, ThresholdSchnorrError> {
-        let verifier_challenge = signatures[0].verifier_challenge;
-        for sig in signatures.iter() {
+        let aggregate_pk = public_keys.iter().fold(C::Affine::zero(), |acc, pk| (acc + pk).into_affine());
+
+        let verifier_challenge = Self::compute_challenge(parameters, round1_messages, round2_messages, &aggregate_pk, message_to_sign)?;
+        for (i, sig) in round3_messages.iter().enumerate() {
             if sig.verifier_challenge != verifier_challenge {
+                return Err(ThresholdSchnorrError::InvalidInput);
+            }
+
+            let verifier_challenge_fe = C::ScalarField::from_le_bytes_mod_order(&sig.verifier_challenge);
+            let public_key_times_verifier_challenge = public_keys[i].mul(verifier_challenge_fe);
+
+            let mut claimed_prover_commitment = parameters.generator.mul(sig.prover_response);
+            claimed_prover_commitment += &public_key_times_verifier_challenge;
+            let claimed_prover_commitment = claimed_prover_commitment.into_affine();
+
+            if round2_messages[i] != claimed_prover_commitment {
                 return Err(ThresholdSchnorrError::InvalidInput);
             }
         }
 
-        let prover_response = signatures.iter().fold(C::ScalarField::zero(), |acc, sig| acc + sig.prover_response);
+        let prover_response = round3_messages.iter().fold(C::ScalarField::zero(), |acc, sig| acc + sig.prover_response);
 
         Ok(Signature { prover_response, verifier_challenge })
     }
@@ -259,13 +265,90 @@ pub enum ThresholdSchnorrError {
     InvalidInput,
 }
 
-pub fn serialize<T: CanonicalSerialize>(
-    t: &T
-) -> Vec<u8> {
-    let mut buf = Vec::new();
-    // unwrap() should be safe because we serialize into a variable-size vector.
-    // However, it might fail if the `t` is invalid somehow, although this
-    // should only occur if there is an error in the caller or this library.
-    t.serialize_uncompressed(&mut buf).unwrap();
-    buf
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use ark_std::rand::RngCore;
+
+    fn get_entropy() -> [u8; 32] {
+        let mut entropy = [0u8; 32];
+        ark_std::test_rng().fill_bytes(&mut entropy);
+        entropy
+    }
+
+    #[test]
+    fn schnorr_sign_and_verify_should_succeed() {
+        type C = ark_ed_on_bn254::EdwardsProjective;
+        let entropy = get_entropy();
+        let params = Schnorr::<C>::setup(entropy).unwrap();
+        let (pk, sk) = Schnorr::<C>::keygen(&params, get_entropy()).unwrap();
+        let message = b"hello schnorr";
+        let sig = Schnorr::<C>::sign(&params, &sk, message, get_entropy()).unwrap();
+        let valid = Schnorr::<C>::verify(&params, &pk, message, &sig).unwrap();
+        assert!(valid);
+    }
+
+    #[test]
+    fn schnorr_verify_should_fail_on_wrong_message() {
+        type C = ark_ed_on_bn254::EdwardsProjective;
+        let entropy = get_entropy();
+        let params = Schnorr::<C>::setup(entropy).unwrap();
+        let (pk, sk) = Schnorr::<C>::keygen(&params, get_entropy()).unwrap();
+        let message = b"hello schnorr";
+        let sig = Schnorr::<C>::sign(&params, &sk, message, get_entropy()).unwrap();
+        let wrong_message = b"wrong message";
+        let valid = Schnorr::<C>::verify(&params, &pk, wrong_message, &sig).unwrap();
+        assert!(!valid);
+    }
+
+    #[test]
+    fn thresholdschnorr_sign_rounds_and_aggregate_should_succeed() {
+        type C = ark_ed_on_bn254::EdwardsProjective;
+        let params = Schnorr::<C>::setup(get_entropy()).unwrap();
+        let (pk1, sk1) = Schnorr::<C>::keygen(&params, get_entropy()).unwrap();
+        let (pk2, sk2) = Schnorr::<C>::keygen(&params, get_entropy()).unwrap();
+        let aggregate_pk = (pk1 + pk2).into_affine();
+        let message = b"threshold schnorr";
+
+        // Round 1
+        let r1_msg1 = ThresholdSchnorr::<C>::sign_round1(&params).unwrap();
+        let r1_msg2 = ThresholdSchnorr::<C>::sign_round1(&params).unwrap();
+
+        // Round 2
+        let r2_msg1 = ThresholdSchnorr::<C>::sign_round2(&params, &[r1_msg1, r1_msg2]).unwrap();
+        let r2_msg2 = ThresholdSchnorr::<C>::sign_round2(&params, &[r1_msg1, r1_msg2]).unwrap();
+
+        // Round 3
+        let r3_msg1 = ThresholdSchnorr::<C>::sign_round3(
+            &params,
+            message,
+            &sk1,
+            &[pk1, pk2],
+            &[r1_msg1, r1_msg2],
+            &[r2_msg1, r2_msg2],
+        ).unwrap();
+
+        let r3_msg2 = ThresholdSchnorr::<C>::sign_round3(
+            &params,
+            message,
+            &sk2,
+            &[pk1, pk2],
+            &[r1_msg1, r1_msg2],
+            &[r2_msg1, r2_msg2],
+        ).unwrap();
+
+        // Aggregate
+        let agg_sig = ThresholdSchnorr::<C>::aggregate(
+            &params,
+            message,
+            &[pk1, pk2],
+            &[r1_msg1, r1_msg2],
+            &[r2_msg1, r2_msg2],
+            &[r3_msg1, r3_msg2],
+        ).unwrap();
+
+        // Verify aggregate signature
+        let valid = Schnorr::<C>::verify(&params, &aggregate_pk, message, &agg_sig).unwrap();
+        assert!(valid);
+    }
 }

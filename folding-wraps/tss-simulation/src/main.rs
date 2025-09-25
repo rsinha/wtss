@@ -5,6 +5,7 @@
 
 mod signature;
 mod random_oracle;
+mod utils;
 
 use signature::{*};
 
@@ -28,7 +29,7 @@ use ark_r1cs_std::{
 };
 use ark_groth16::{Groth16};
 use ark_relations::gr1cs::{Namespace, ConstraintSystemRef, SynthesisError};
-use ark_std::rand::thread_rng;
+use ark_std::rand::{thread_rng, Rng};
 use core::{marker::PhantomData};
 
 use ark_bn254::{Bn254, Fr, G1Projective as G1};
@@ -36,6 +37,10 @@ use ark_grumpkin::Projective as G2;
 use ark_ed_on_bn254::constraints::EdwardsVar as JubJubVar;
 use ark_ed_on_bn254::EdwardsProjective as JubJub;
 type S = signature::schnorr::Schnorr<JubJub>;
+type TS = signature::schnorr::ThresholdSchnorr<JubJub>;
+type TSR1Msg = signature::schnorr::ThresholdSchnorrMessage1;
+type TSR2Msg = signature::schnorr::ThresholdSchnorrMessage2<JubJub>;
+type TSR3Msg = signature::schnorr::ThresholdSchnorrMessage3<JubJub>;
 type SParams = signature::schnorr::Parameters<JubJub>;
 type SVerifyGadget = signature::schnorr::constraints::SchnorrSignatureVerifyGadget<JubJub, JubJubVar>;
 type SPkVar = signature::schnorr::constraints::PublicKeyVar<JubJub, JubJubVar>;
@@ -251,7 +256,8 @@ impl<const K: usize> FCircuit<Fr> for TSSFCircuit<K> {
             poseidon_output.to_constraint_field()?
         };
 
-        let schnorr_parameters = S::setup::<_>(&mut thread_rng()).unwrap();
+        let rng = &mut thread_rng();
+        let schnorr_parameters = S::setup(rng.gen()).unwrap();
         let parameters_var = <SVerifyGadget as SigVerifyGadget<S, Fr>>
             ::ParametersVar::new_constant(cs.clone(), schnorr_parameters)?;
         let next_ab_hash = computed_next_state[0].to_bytes_le()?;
@@ -315,10 +321,11 @@ fn hash_addressbook(ab: &AddressBook) -> Fr {
 }
 
 fn create_new_addressbook(params: &SParams) -> (AddressBook, Keys) {
+    let rng = &mut thread_rng();
     let mut keys = Vec::new();
     let mut ab = Vec::new();
     for _i in 0..MAX_AB_SIZE {
-        let (pk, sk) = S::keygen(params, &mut thread_rng()).unwrap();
+        let (pk, sk) = S::keygen(params, rng.gen()).unwrap();
         let weight = Fr::from(1);
         keys.push(sk);
         ab.push((pk, weight));
@@ -328,47 +335,35 @@ fn create_new_addressbook(params: &SParams) -> (AddressBook, Keys) {
 
 fn simulate_threshold_signing(present_bits: Vec<bool>, ab: &AddressBook, keys: &Keys, message: &[u8]) 
 -> signature::schnorr::Signature<JubJub> {
-    let mut aggregate_pubkey = ark_ed_on_bn254::EdwardsAffine::zero();
-    for i in 0..MAX_AB_SIZE {
-        if i % 2 == 0 {
-            aggregate_pubkey = aggregate_pubkey.add(ab[i].0).into_affine();
-        }
-    }
-
-    let schnorr_parameters = S::setup::<_>(&mut thread_rng()).unwrap();
-    let mut states = Vec::new();
+    let mut pub_keys = Vec::new();
     for i in 0..MAX_AB_SIZE {
         if present_bits[i] {
-            let state = signature::schnorr::ThresholdSchnorr::<JubJub>::
-                initiate_signing_session(&keys[i], &mut thread_rng());
-            states.push(state);
+            pub_keys.push(ab[i].0);
         }
     }
 
-    let mut round1_messages = Vec::new();
-    for i in 0..states.len() {
-        let (msg1, state) = signature::schnorr::ThresholdSchnorr::<JubJub>::
-            sign_round1(&schnorr_parameters, states[i].clone()).unwrap();
-        round1_messages.push(msg1);
-        states[i] = state;
-    }
+    let rng = &mut thread_rng();
+    let schnorr_parameters = S::setup(rng.gen()).unwrap();
 
-    let mut round2_messages = Vec::new();
-    for i in 0..states.len() {
-        let (msg2, state) = signature::schnorr::ThresholdSchnorr::<JubJub>::
-            sign_round2(&schnorr_parameters, &round1_messages, states[i].clone()).unwrap();
-        round2_messages.push(msg2);
-        states[i] = state;
-    }
+    let r1_messages: Vec<TSR1Msg> = present_bits
+        .iter()
+        .enumerate()
+        .filter_map(|(_i, &present)| { if present { Some(TS::sign_round1(&schnorr_parameters).unwrap()) } else { None } })
+        .collect::<Vec<TSR1Msg>>();
 
-    let mut partial_signatures: Vec<_> = Vec::new();
-    for i in 0..states.len() {
-        let partial_signature = signature::schnorr::ThresholdSchnorr::<JubJub>::
-            sign_round3(&schnorr_parameters, &aggregate_pubkey, message, &round2_messages, states[i].clone()).unwrap();
-        partial_signatures.push(partial_signature);
-    }
+    let r2_messages: Vec<TSR2Msg> = present_bits
+        .iter()
+        .enumerate()
+        .filter_map(|(_i, &present)| { if present { Some(TS::sign_round2(&schnorr_parameters, &r1_messages).unwrap()) } else { None } })
+        .collect();
 
-    signature::schnorr::ThresholdSchnorr::<JubJub>::finish_signing_session(&partial_signatures).unwrap()
+    let r3_messages: Vec<TSR3Msg> = present_bits
+        .iter()
+        .enumerate()
+        .filter_map(|(i, &present)| { if present { Some(TS::sign_round3(&schnorr_parameters, message, &keys[i], &pub_keys, &r1_messages, &r2_messages).unwrap()) } else { None } })
+        .collect();
+
+    signature::schnorr::ThresholdSchnorr::<JubJub>::aggregate(&schnorr_parameters, message, &pub_keys, &r1_messages, &r2_messages, &r3_messages).unwrap()
 }
 
 pub struct TSSPublicParams {
@@ -461,7 +456,8 @@ fn main() -> Result<(), Error> {
     let params = setup(&F_circuit)?;
 
     println!("Initialize FoldingScheme");
-    let schnorr_parameters = S::setup::<_>(&mut thread_rng()).unwrap();
+    let rng = &mut thread_rng();
+    let schnorr_parameters = S::setup(rng.gen()).unwrap();
     let (mut prev_ab, mut prev_keys) = create_new_addressbook(&schnorr_parameters);
     let prev_tss_vk = [0u8; 1280]; // placeholder for TSS vk bytes
     let initial_state = vec![hash_addressbook(&prev_ab), hash_hints_vk(&prev_tss_vk)];
@@ -506,7 +502,12 @@ fn main() -> Result<(), Error> {
             }
         }
 
-        let aggregate_signature = simulate_threshold_signing((0..MAX_AB_SIZE).map(|j| j % 2 == 0).collect(), &prev_ab, &prev_keys, &message);
+        let aggregate_signature = simulate_threshold_signing(
+            (0..MAX_AB_SIZE).map(|j| j % 2 == 0).collect(),
+            &prev_ab,
+            &prev_keys,
+            &message
+        );
         assert!(S::verify(&schnorr_parameters, &aggregate_pubkey, &message, &aggregate_signature).unwrap());
         let verifier_challenge = aggregate_signature.verifier_challenge;
         let prover_response = aggregate_signature.prover_response.into_bigint().to_bytes_le();
