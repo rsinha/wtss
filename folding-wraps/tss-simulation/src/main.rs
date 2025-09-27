@@ -74,6 +74,7 @@ type Keys = [schnorr::SecretKey<JubJub>; MAX_AB_SIZE];
 /// `type N = Nova<...>` by using another folding scheme that fulfills the `FoldingScheme`
 /// trait, and the rest of our code would be working without needing to be updated.
 type N = Nova<G1, G2, TSSFCircuit<MAX_AB_SIZE>, KZG<'static, Bn254>, Pedersen<G2>, false>;
+type NovaProof = <N as FoldingScheme<G1, G2, TSSFCircuit<MAX_AB_SIZE>>>::IVCProof;
 type NPP = ProverParams<G1, G2, KZG<'static, Bn254>, Pedersen<G2>, false>;
 type NVP = VerifierParams<G1, G2, KZG<'static, Bn254>, Pedersen<G2>, false>;
 type D = DeciderEth<G1, G2, TSSFCircuit<MAX_AB_SIZE>, KZG<'static, Bn254>, Pedersen<G2>, Groth16<Bn254>, N>;
@@ -447,6 +448,41 @@ fn _write_params_to_disk(params: &TSSPublicParams) -> Result<(), ark_serialize::
     Ok(())
 }
 
+fn prepare_external_inputs(
+    aggregate_signature: &signature::schnorr::Signature<JubJub>,
+    prev_ab: &AddressBook,
+    next_ab: &AddressBook,
+    next_tss_vk: &[u8; 1280],
+) -> Vec<Fr> {
+    let mut external_inputs_at_step = Vec::new();
+    for i in 0..MAX_AB_SIZE {
+        external_inputs_at_step.push(prev_ab[i].0.x);
+        external_inputs_at_step.push(prev_ab[i].0.y);
+        external_inputs_at_step.push(prev_ab[i].1);
+    }
+    for i in 0..MAX_AB_SIZE {
+        external_inputs_at_step.push(next_ab[i].0.x);
+        external_inputs_at_step.push(next_ab[i].0.y);
+        external_inputs_at_step.push(next_ab[i].1);
+    }
+    for i in 0..MAX_AB_SIZE {
+        external_inputs_at_step.push(Fr::from(i % 2 == 0)); // even signatures present
+    }
+
+    let verifier_challenge = aggregate_signature.verifier_challenge;
+    let prover_response = aggregate_signature.prover_response.into_bigint().to_bytes_le();
+    for j in 0..32 {
+        external_inputs_at_step.push(Fr::from_le_bytes_mod_order(&[verifier_challenge[j]]));
+    }
+    for j in 0..32 {
+        external_inputs_at_step.push(Fr::from_le_bytes_mod_order(&[prover_response[j]]));
+    }
+
+    external_inputs_at_step.push(hash_hints_vk(next_tss_vk));
+
+    external_inputs_at_step
+}
+
 /// cargo run --release --example tss
 fn main() -> Result<(), Error> {
     println!("Running TSS simulation");
@@ -461,46 +497,36 @@ fn main() -> Result<(), Error> {
     let (mut prev_ab, mut prev_keys) = create_new_addressbook(&schnorr_parameters);
     let prev_tss_vk = [0u8; 1280]; // placeholder for TSS vk bytes
     let initial_state = vec![hash_addressbook(&prev_ab), hash_hints_vk(&prev_tss_vk)];
-    let mut ivc_instance = N::init(&(params.nova_pp.clone(), params.nova_vp.clone()), F_circuit, initial_state.clone())?;
 
     println!("ledger ID: {}", prettyprint(&initial_state[0].into_bigint().to_bytes_le()));
+    // -------------------------------- Global State across loop iterations --------------------------------
+    let mut ivc_proof_encoded = vec![];
+
+    // --------------------------------------- Step 0 is special ---------------------------------------
 
     // compute a step of the IVC
     for i in 0..num_steps {
         println!("-------------------------- Step {} --------------------------", i);
-        let (next_ab, next_keys) = create_new_addressbook(&schnorr_parameters);
+        let (next_ab, next_keys) = if i == 0 {
+            (prev_ab.clone(), prev_keys.clone())
+        } else {
+            create_new_addressbook(&schnorr_parameters)
+        };
         let next_tss_vk = [0u8; 1280]; // placeholder for TSS vk bytes
-
-        let mut external_inputs_at_step = Vec::new();
-        for i in 0..MAX_AB_SIZE {
-            external_inputs_at_step.push(prev_ab[i].0.x);
-            external_inputs_at_step.push(prev_ab[i].0.y);
-            external_inputs_at_step.push(prev_ab[i].1);
-        }
-        for i in 0..MAX_AB_SIZE {
-            external_inputs_at_step.push(next_ab[i].0.x);
-            external_inputs_at_step.push(next_ab[i].0.y);
-            external_inputs_at_step.push(next_ab[i].1);
-        }
-        for i in 0..MAX_AB_SIZE {
-            external_inputs_at_step.push(Fr::from(i % 2 == 0)); // even signatures present
-        }
 
         let message: Vec<u8> = [
             hash_addressbook(&next_ab).into_bigint().to_bytes_le(), 
             hash_hints_vk(&next_tss_vk).into_bigint().to_bytes_le()
         ].concat();
         println!("Message to be signed at step {}: {}", i, prettyprint(message.as_slice()));
+        println!("Prev AB hash: {}", prettyprint(&hash_addressbook(&prev_ab).into_bigint().to_bytes_le()));
         println!("Next AB hash: {}", prettyprint(&hash_addressbook(&next_ab).into_bigint().to_bytes_le()));
         println!("Next TSS vk hash: {}", prettyprint(&hash_hints_vk(&next_tss_vk).into_bigint().to_bytes_le()));
 
         // compute aggregate public key
-        let mut aggregate_pubkey = ark_ed_on_bn254::EdwardsAffine::zero();
-        for i in 0..MAX_AB_SIZE {
-            if i % 2 == 0 {
-                aggregate_pubkey = aggregate_pubkey.add(prev_ab[i].0).into_affine();
-            }
-        }
+        let aggregate_pubkey = (0..MAX_AB_SIZE)
+            .filter(|&i| i % 2 == 0)
+            .fold(ark_ed_on_bn254::EdwardsAffine::zero(), |acc, i| acc.add(prev_ab[i].0).into_affine());
 
         let aggregate_signature = simulate_threshold_signing(
             (0..MAX_AB_SIZE).map(|j| j % 2 == 0).collect(),
@@ -509,50 +535,60 @@ fn main() -> Result<(), Error> {
             &message
         );
         assert!(S::verify(&schnorr_parameters, &aggregate_pubkey, &message, &aggregate_signature).unwrap());
-        let verifier_challenge = aggregate_signature.verifier_challenge;
-        let prover_response = aggregate_signature.prover_response.into_bigint().to_bytes_le();
-        for j in 0..32 {
-            external_inputs_at_step.push(Fr::from_le_bytes_mod_order(&[verifier_challenge[j]]));
-        }
-        for j in 0..32 {
-            external_inputs_at_step.push(Fr::from_le_bytes_mod_order(&[prover_response[j]]));
-        }
 
-        external_inputs_at_step.push(hash_hints_vk(&next_tss_vk));
+        let external_inputs_at_step = prepare_external_inputs(
+            &aggregate_signature,
+            &prev_ab,
+            &next_ab,
+            &next_tss_vk
+        );
 
         let start = std::time::Instant::now();
+        let mut ivc_instance = if i == 0 {
+            let mut instance = N::init(&(params.nova_pp.clone(), params.nova_vp.clone()), F_circuit, initial_state.clone())?;
+            instance.prove_step(thread_rng(), VecF(external_inputs_at_step.clone()), None)?;
+            instance
+        } else {
+            let ivc_proof = NovaProof::deserialize_compressed(&ivc_proof_encoded[..]).unwrap();
+            N::from_ivc_proof(ivc_proof, (), (params.nova_pp.clone(), params.nova_vp.clone()))?
+        };
+
         ivc_instance.prove_step(thread_rng(), VecF(external_inputs_at_step.clone()), None)?;
         println!("Nova::prove_step {}: {:?}", i, start.elapsed());
+        println!("Run the Nova's IVC verifier");
+        let next_ivc_proof = ivc_instance.ivc_proof();
+        N::verify(params.nova_vp.clone(), next_ivc_proof.clone())?;
 
-        if i > 0 {
-            println!("Run the Nova's IVC verifier");
-            let ivc_proof = ivc_instance.ivc_proof();
-            N::verify(params.nova_vp.clone(), ivc_proof.clone())?;
+        let mut next_ivc_proof_encoded = vec![];
+        next_ivc_proof.serialize_compressed(&mut next_ivc_proof_encoded).unwrap();
+        ivc_proof_encoded = next_ivc_proof_encoded;
+        println!("IVC proof serialized size: {} bytes", ivc_proof_encoded.len());
 
-            let folding_scheme = N::from_ivc_proof(ivc_proof.clone(), (), (params.nova_pp.clone(), params.nova_vp.clone()))?;
+        {
+            //let folding_scheme = N::from_ivc_proof(next_ivc_proof.clone(), (), (params.nova_pp.clone(), params.nova_vp.clone()))?;
 
             let start = std::time::Instant::now();
-            let proof = D::prove(thread_rng(), params.decider_pp.clone(), folding_scheme.clone())?;
+            let proof = D::prove(thread_rng(), params.decider_pp.clone(), ivc_instance.clone())?;
             println!("generated Decider proof: {:?}", start.elapsed());
 
             let verified = D::verify(
                 params.decider_vp.clone(),
-                folding_scheme.i,
-                folding_scheme.z_0.clone(),
-                folding_scheme.z_i.clone(),
-                &folding_scheme.U_i.get_commitments(),
-                &folding_scheme.u_i.get_commitments(),
+                ivc_instance.i,
+                ivc_instance.z_0.clone(),
+                ivc_instance.z_i.clone(),
+                &ivc_instance.U_i.get_commitments(),
+                &ivc_instance.u_i.get_commitments(),
                 &proof,
             )?;
             assert!(verified);
 
             // serialize the proof
             let proof_data = ProofData {
-                i: folding_scheme.i,
-                z_0: folding_scheme.z_0,
-                z_i: folding_scheme.z_i,
-                U_i_commitments: folding_scheme.U_i.get_commitments(),
-                u_i_commitments: folding_scheme.u_i.get_commitments(),
+                i: ivc_instance.i,
+                z_0: ivc_instance.z_0,
+                z_i: ivc_instance.z_i,
+                U_i_commitments: ivc_instance.U_i.get_commitments(),
+                u_i_commitments: ivc_instance.u_i.get_commitments(),
                 proof,
             };
             let mut proof_serialized = vec![];
@@ -569,13 +605,14 @@ fn main() -> Result<(), Error> {
         prev_keys = next_keys;
     }
 
-    let folding_scheme = N::from_ivc_proof(ivc_instance.ivc_proof(), (), (params.nova_pp.clone(), params.nova_vp.clone()))?;
+    let ivc_proof = NovaProof::deserialize_compressed(&ivc_proof_encoded[..]).unwrap();
+    let folding_scheme = N::from_ivc_proof(ivc_proof.clone(), (), (params.nova_pp.clone(), params.nova_vp.clone()))?;
 
     println!("Run the Nova's IVC verifier");
-    let ivc_proof = ivc_instance.ivc_proof();
+    let ivc_proof = folding_scheme.ivc_proof();
     N::verify(params.nova_vp, ivc_proof)?;
     let mut ivc_proof_serialized = Vec::new();
-    ivc_instance.ivc_proof().serialize_compressed(&mut ivc_proof_serialized).unwrap();
+    folding_scheme.ivc_proof().serialize_compressed(&mut ivc_proof_serialized).unwrap();
     println!("IVC proof serialized size: {} bytes", ivc_proof_serialized.len());
 
     let start = std::time::Instant::now();
@@ -623,6 +660,183 @@ fn main() -> Result<(), Error> {
 
     Ok(())
 }
+
+// /// cargo run --release --example tss
+// fn main() -> Result<(), Error> {
+//     println!("Running TSS simulation");
+//     let num_steps = 5;
+//     let F_circuit = TSSFCircuit::<MAX_AB_SIZE>::new(())?;
+
+//     let params = setup(&F_circuit)?;
+
+//     println!("Initialize FoldingScheme");
+//     let rng = &mut thread_rng();
+//     let schnorr_parameters = S::setup(rng.gen()).unwrap();
+//     let (mut prev_ab, mut prev_keys) = create_new_addressbook(&schnorr_parameters);
+//     let prev_tss_vk = [0u8; 1280]; // placeholder for TSS vk bytes
+//     let initial_state = vec![hash_addressbook(&prev_ab), hash_hints_vk(&prev_tss_vk)];
+//     let mut ivc_instance = N::init(&(params.nova_pp.clone(), params.nova_vp.clone()), F_circuit, initial_state.clone())?;
+
+//     println!("ledger ID: {}", prettyprint(&initial_state[0].into_bigint().to_bytes_le()));
+
+//     // compute a step of the IVC
+//     for i in 0..num_steps {
+//         println!("-------------------------- Step {} --------------------------", i);
+//         let (next_ab, next_keys) = create_new_addressbook(&schnorr_parameters);
+//         let next_tss_vk = [0u8; 1280]; // placeholder for TSS vk bytes
+
+//         let mut external_inputs_at_step = Vec::new();
+//         for i in 0..MAX_AB_SIZE {
+//             external_inputs_at_step.push(prev_ab[i].0.x);
+//             external_inputs_at_step.push(prev_ab[i].0.y);
+//             external_inputs_at_step.push(prev_ab[i].1);
+//         }
+//         for i in 0..MAX_AB_SIZE {
+//             external_inputs_at_step.push(next_ab[i].0.x);
+//             external_inputs_at_step.push(next_ab[i].0.y);
+//             external_inputs_at_step.push(next_ab[i].1);
+//         }
+//         for i in 0..MAX_AB_SIZE {
+//             external_inputs_at_step.push(Fr::from(i % 2 == 0)); // even signatures present
+//         }
+
+//         let message: Vec<u8> = [
+//             hash_addressbook(&next_ab).into_bigint().to_bytes_le(), 
+//             hash_hints_vk(&next_tss_vk).into_bigint().to_bytes_le()
+//         ].concat();
+//         println!("Message to be signed at step {}: {}", i, prettyprint(message.as_slice()));
+//         println!("Next AB hash: {}", prettyprint(&hash_addressbook(&next_ab).into_bigint().to_bytes_le()));
+//         println!("Next TSS vk hash: {}", prettyprint(&hash_hints_vk(&next_tss_vk).into_bigint().to_bytes_le()));
+
+//         // compute aggregate public key
+//         let mut aggregate_pubkey = ark_ed_on_bn254::EdwardsAffine::zero();
+//         for i in 0..MAX_AB_SIZE {
+//             if i % 2 == 0 {
+//                 aggregate_pubkey = aggregate_pubkey.add(prev_ab[i].0).into_affine();
+//             }
+//         }
+
+//         let aggregate_signature = simulate_threshold_signing(
+//             (0..MAX_AB_SIZE).map(|j| j % 2 == 0).collect(),
+//             &prev_ab,
+//             &prev_keys,
+//             &message
+//         );
+//         assert!(S::verify(&schnorr_parameters, &aggregate_pubkey, &message, &aggregate_signature).unwrap());
+//         let verifier_challenge = aggregate_signature.verifier_challenge;
+//         let prover_response = aggregate_signature.prover_response.into_bigint().to_bytes_le();
+//         for j in 0..32 {
+//             external_inputs_at_step.push(Fr::from_le_bytes_mod_order(&[verifier_challenge[j]]));
+//         }
+//         for j in 0..32 {
+//             external_inputs_at_step.push(Fr::from_le_bytes_mod_order(&[prover_response[j]]));
+//         }
+
+//         external_inputs_at_step.push(hash_hints_vk(&next_tss_vk));
+
+//         let start = std::time::Instant::now();
+//         ivc_instance.prove_step(thread_rng(), VecF(external_inputs_at_step.clone()), None)?;
+//         println!("Nova::prove_step {}: {:?}", i, start.elapsed());
+
+//         if i > 0 {
+//             println!("Run the Nova's IVC verifier");
+//             let ivc_proof = ivc_instance.ivc_proof();
+//             N::verify(params.nova_vp.clone(), ivc_proof.clone())?;
+
+//             let folding_scheme = N::from_ivc_proof(ivc_proof.clone(), (), (params.nova_pp.clone(), params.nova_vp.clone()))?;
+
+//             let start = std::time::Instant::now();
+//             let proof = D::prove(thread_rng(), params.decider_pp.clone(), folding_scheme.clone())?;
+//             println!("generated Decider proof: {:?}", start.elapsed());
+
+//             let verified = D::verify(
+//                 params.decider_vp.clone(),
+//                 folding_scheme.i,
+//                 folding_scheme.z_0.clone(),
+//                 folding_scheme.z_i.clone(),
+//                 &folding_scheme.U_i.get_commitments(),
+//                 &folding_scheme.u_i.get_commitments(),
+//                 &proof,
+//             )?;
+//             assert!(verified);
+
+//             // serialize the proof
+//             let proof_data = ProofData {
+//                 i: folding_scheme.i,
+//                 z_0: folding_scheme.z_0,
+//                 z_i: folding_scheme.z_i,
+//                 U_i_commitments: folding_scheme.U_i.get_commitments(),
+//                 u_i_commitments: folding_scheme.u_i.get_commitments(),
+//                 proof,
+//             };
+//             let mut proof_serialized = vec![];
+//             proof_data.serialize_compressed(&mut proof_serialized).unwrap();
+//             println!("Decider proof serialized size: {} bytes", proof_serialized.len());
+
+//             let mut decider_vp_serialized = vec![];
+//             params.decider_vp.serialize_compressed(&mut decider_vp_serialized)?;
+
+//             assert!(verify_tss(&decider_vp_serialized, &proof_serialized)?);
+//         }
+
+//         prev_ab = next_ab;
+//         prev_keys = next_keys;
+//     }
+
+//     let folding_scheme = N::from_ivc_proof(ivc_instance.ivc_proof(), (), (params.nova_pp.clone(), params.nova_vp.clone()))?;
+
+//     println!("Run the Nova's IVC verifier");
+//     let ivc_proof = ivc_instance.ivc_proof();
+//     N::verify(params.nova_vp, ivc_proof)?;
+//     let mut ivc_proof_serialized = Vec::new();
+//     ivc_instance.ivc_proof().serialize_compressed(&mut ivc_proof_serialized).unwrap();
+//     println!("IVC proof serialized size: {} bytes", ivc_proof_serialized.len());
+
+//     let start = std::time::Instant::now();
+//     let proof = D::prove(thread_rng(), params.decider_pp, folding_scheme.clone())?;
+//     println!("generated Decider proof: {:?}", start.elapsed());
+
+//     let verified = D::verify(
+//         params.decider_vp.clone(),
+//         folding_scheme.i,
+//         folding_scheme.z_0.clone(),
+//         folding_scheme.z_i.clone(),
+//         &folding_scheme.U_i.get_commitments(),
+//         &folding_scheme.u_i.get_commitments(),
+//         &proof,
+//     )?;
+//     assert!(verified);
+
+//     // serialize the proof
+//     let proof_data = ProofData {
+//         i: folding_scheme.i,
+//         z_0: folding_scheme.z_0,
+//         z_i: folding_scheme.z_i,
+//         U_i_commitments: folding_scheme.U_i.get_commitments(),
+//         u_i_commitments: folding_scheme.u_i.get_commitments(),
+//         proof,
+//     };
+//     let mut proof_serialized = vec![];
+//     proof_data.serialize_compressed(&mut proof_serialized).unwrap();
+//     println!("Decider proof serialized size: {} bytes", proof_serialized.len());
+
+//     let mut decider_vp_serialized = vec![];
+//     params.decider_vp.serialize_compressed(&mut decider_vp_serialized)?;
+
+//     let start = std::time::Instant::now();
+//     let verified = verify_tss(&decider_vp_serialized, &proof_serialized)?;
+//     println!("verify_tss time: {:?}", start.elapsed());
+//     assert!(verified);
+
+//     let ledger_id = proof_data.z_0[0].clone().into_bigint().to_bytes_le();
+//     let latest_ab_hash = proof_data.z_i[0].clone().into_bigint().to_bytes_le();
+//     let latest_tss_vk_hash = proof_data.z_i[1].clone().into_bigint().to_bytes_le();
+//     println!("genesis AB hash: {}", prettyprint(&ledger_id));
+//     println!("latest AB hash: {}", prettyprint(&latest_ab_hash));
+//     println!("latest TSS vk hash: {}", prettyprint(&latest_tss_vk_hash));
+
+//     Ok(())
+// }
 
 fn prettyprint(bytes: &[u8]) -> String {
     bytes.iter().map(|b| format!("{:02x}", b)).collect::<Vec<_>>().join("")
