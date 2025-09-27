@@ -9,6 +9,7 @@ mod signature;
 mod random_oracle;
 mod utils;
 
+use sha3::digest::typenum::bit;
 use signature::{*};
 
 /********************************* Imports *********************************/
@@ -348,6 +349,7 @@ fn prepare_external_inputs(
     prev_ab: &AddressBook,
     next_ab: &AddressBook,
     next_tss_vk: &[u8],
+    bitvector: &[bool; MAX_AB_SIZE],
 ) -> Vec<Fr> {
     let mut external_inputs_at_step = Vec::new();
     for i in 0..MAX_AB_SIZE {
@@ -361,7 +363,7 @@ fn prepare_external_inputs(
         external_inputs_at_step.push(next_ab[i].1);
     }
     for i in 0..MAX_AB_SIZE {
-        external_inputs_at_step.push(Fr::from(i % 2 == 0)); // even signatures present
+        external_inputs_at_step.push(Fr::from(bitvector[i])); // even signatures present
     }
 
     let verifier_challenge = aggregate_signature.verifier_challenge;
@@ -581,7 +583,7 @@ impl WRAPS {
 
     #[allow(clippy::too_many_arguments)]
     /// Creates the first proof for the genesis AddressBook.
-    pub fn construct_uncompressed_proof(
+    pub fn construct_wraps_proof(
         pk: &WRAPSProvingKey,                         // proving key output by sp1 setup
         vk: &WRAPSVerificationKey,                    // verifying key output by sp1 setup
         ab_genesis_hash: &AddressBookHash,            // genesis AddressBook hash
@@ -617,7 +619,8 @@ impl WRAPS {
             &aggregate_signature,
             &prev_ab,
             &next_ab,
-            tss_vk.as_ref()
+            tss_vk.as_ref(),
+            bitvector,
         );
 
         let mut ivc_instance = if is_genesis {
@@ -669,16 +672,14 @@ impl WRAPS {
         let mut compressed_proof_serialized = vec![];
         compressed_proof.serialize_compressed(&mut compressed_proof_serialized).unwrap();
 
-        let mut decider_vp_serialized = vec![];
-        vk.decider_vp.serialize_compressed(&mut decider_vp_serialized)
-            .map_err(|_| WRAPSError::CryptographyError)?;
+        let decider_vp_serialized = Self::get_wraps_verification_key_bytes(vk).unwrap();
 
-        assert!(Self::verify_compressed_proof(&decider_vp_serialized, &compressed_proof_serialized).map_err(|_| WRAPSError::CryptographyError)?);
+        assert!(Self::verify_compressed_wraps_proof(&decider_vp_serialized, &compressed_proof_serialized).map_err(|_| WRAPSError::CryptographyError)?);
 
         Ok((next_ivc_proof_encoded, compressed_proof_serialized))
     }
 
-    pub fn verify_compressed_proof(
+    pub fn verify_compressed_wraps_proof(
         decider_vp_serialized: &[u8],
         proof_serialized: &[u8],
     ) -> Result<bool, Error> {
@@ -706,4 +707,177 @@ impl WRAPS {
         Ok(verified)
     }
         
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn create_new_addressbook() -> (AddressBook, Keys) {
+        let rng = &mut thread_rng();
+        let schnorr_parameters = Schnorr::setup(rng.gen()).unwrap();
+        let mut keys = Vec::new();
+        let mut ab = Vec::new();
+        for _i in 0..MAX_AB_SIZE {
+            let (pk, sk) = Schnorr::keygen(&schnorr_parameters, rng.gen()).unwrap();
+            let weight = Fr::from(1);
+            keys.push(sk);
+            ab.push((pk, weight));
+        }
+        (ab.try_into().unwrap(), keys.try_into().unwrap())
+    }
+
+    fn even_bitvector() -> [bool; MAX_AB_SIZE] {
+        std::array::from_fn(|i| i % 2 == 0)
+    }
+
+    fn signing_subset<'a>(
+        ab: &'a AddressBook,
+        keys: &'a Keys,
+        bitvector: &[bool; MAX_AB_SIZE],
+    ) -> (Vec<SchnorrPubKey>, Vec<&'a SchnorrPrivKey>) {
+        let mut pks = Vec::new();
+        let mut sk_refs = Vec::new();
+        for i in 0..MAX_AB_SIZE {
+            if bitvector[i] {
+                pks.push(ab[i].0);
+                sk_refs.push(&keys[i]);
+            }
+        }
+        (pks, sk_refs)
+    }
+
+    fn threshold_sign(message: &[u8], pks: &[SchnorrPubKey], sk_refs: &[&SchnorrPrivKey]) -> SchnorrSignature {
+        // Round 1 for each participant
+        let r1_msgs: Vec<SigningProtocolMessage> = (0..pks.len())
+            .map(|_| match WRAPS::signing_protocol(
+                SigningProtocolPhase::R1,
+                message,
+                None,
+                &[],
+                &[],
+                &[],
+                &[]
+            ).unwrap() {
+                SigningProtocolObject::ProtocolMessage(m) => m,
+                _ => unreachable!(),
+            })
+            .collect();
+
+        // Round 2 for each participant
+        let r2_msgs: Vec<SigningProtocolMessage> = (0..pks.len())
+            .map(|_| match WRAPS::signing_protocol(
+                SigningProtocolPhase::R2,
+                message,
+                None,
+                pks,
+                &r1_msgs,
+                &[],
+                &[]
+            ).unwrap() {
+                SigningProtocolObject::ProtocolMessage(m) => m,
+                _ => unreachable!(),
+            })
+            .collect();
+
+        // Round 3 for each participant (signers only)
+        let r3_msgs: Vec<SigningProtocolMessage> = sk_refs
+            .iter()
+            .map(|sk| match WRAPS::signing_protocol(
+                SigningProtocolPhase::R3,
+                message,
+                Some(sk),
+                pks,
+                &r1_msgs,
+                &r2_msgs,
+                &[]
+            ).unwrap() {
+                SigningProtocolObject::ProtocolMessage(m) => m,
+                _ => unreachable!(),
+            })
+            .collect();
+
+        // Aggregate signatures
+        match WRAPS::signing_protocol(
+            SigningProtocolPhase::Aggregate,
+            message,
+            None,
+            pks,
+            &r1_msgs,
+            &r2_msgs,
+            &r3_msgs,
+        ).unwrap() {
+            SigningProtocolObject::ProtocolOutput(sig) => sig,
+            _ => unreachable!(),
+        }
+    }
+
+    #[test]
+    fn wraps_simulation() {
+        let num_steps = 7;
+
+        let schnorr_parameters = Schnorr::setup([0u8; 32]).unwrap();
+        let (wraps_pk, wraps_vk) = WRAPS::setup_prover().unwrap();
+
+        // Build genesis address book and keys
+        let (genesis_ab, genesis_keys) = create_new_addressbook();
+        let ab_genesis_hash = super::hash_addressbook(&genesis_ab);
+
+        // -------------------------------- Global State across loop iterations --------------------------------
+        let mut prev_uncompressed_wraps_proof = vec![];
+
+        // --------------------------------------- Step 0 is special ---------------------------------------
+
+        let (mut prev_ab, mut prev_keys) = (genesis_ab, genesis_keys);
+        // compute a step of the IVC
+        for i in 0..num_steps {
+            let (next_ab, next_keys) = if i == 0 {
+                (prev_ab.clone(), prev_keys.clone())
+            } else {
+                create_new_addressbook()
+            };
+            let next_tss_vk = [0u8; 1280]; // placeholder for TSS vk bytes
+
+            // message being signed via threshold Schnorr
+            let message: Vec<u8> = [
+                hash_addressbook(&next_ab).into_bigint().to_bytes_le(), 
+                hash_hints_vk(&next_tss_vk).into_bigint().to_bytes_le()
+            ].concat();
+
+            let (pks_present, sks_present) = signing_subset(&prev_ab, &prev_keys, &even_bitvector());
+
+            // compute aggregate public key
+            let aggregate_pubkey = pks_present
+                .iter()
+                .fold(SchnorrPubKey::zero(), |acc, pk| (acc + pk).into_affine());
+
+            // simulate the signing protocol
+            let aggregate_signature = threshold_sign(&message, &pks_present, &sks_present);
+
+            assert!(Schnorr::verify(&schnorr_parameters, &aggregate_pubkey, &message, &aggregate_signature).unwrap());
+
+            let start = std::time::Instant::now();
+            let (next_uncompressed, next_compressed) = WRAPS::construct_wraps_proof(
+                &wraps_pk,
+                &wraps_vk,
+                &ab_genesis_hash,
+                &prev_ab,
+                &next_ab,
+                if i == 0 { None } else { Some(prev_uncompressed_wraps_proof.clone()) },
+                &next_tss_vk,
+                &aggregate_signature,
+                &even_bitvector(),
+            ).expect("WRAPS proof should be created");
+            println!("Step {} WRAPS proof creation time: {:?}", i, start.elapsed());
+
+            let decider_vp_serialized = WRAPS::get_wraps_verification_key_bytes(&wraps_vk).unwrap();
+
+            let verified = WRAPS::verify_compressed_wraps_proof(&decider_vp_serialized, &next_compressed).unwrap();
+            assert!(verified);
+
+            prev_ab = next_ab;
+            prev_keys = next_keys;
+            prev_uncompressed_wraps_proof = next_uncompressed;
+        }
+    }
 }
