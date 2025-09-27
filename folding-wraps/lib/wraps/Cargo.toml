@@ -25,6 +25,7 @@ num-integer = { workspace = true }
 sha3 = { workspace = true }
 blake2 = { workspace = true }
 digest = { workspace = true }
+rand_chacha = { workspace = true }
 
 folding-schemes = { workspace = true }
 

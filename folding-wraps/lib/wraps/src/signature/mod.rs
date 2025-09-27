@@ -1,15 +1,16 @@
 #![allow(unused_imports)]
 #![allow(dead_code)]
 
+pub mod schnorr;
+pub mod constraints;
+
 use ark_crypto_primitives::Error;
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 use ark_std::hash::Hash;
 use ark_std::rand::Rng;
 
-pub mod constraints;
 pub use constraints::*;
 
-pub mod schnorr;
 
 pub trait SignatureScheme {
     type Parameters: Clone + Send + Sync;
@@ -17,18 +18,20 @@ pub trait SignatureScheme {
     type SecretKey: CanonicalSerialize + CanonicalDeserialize + Clone + Default;
     type Signature: Clone + Default + Send + Sync;
 
-    fn setup<R: Rng>(rng: &mut R) -> Result<Self::Parameters, Error>;
+    fn setup(
+        entropy: [u8; 32]
+    ) -> Result<Self::Parameters, Error>;
 
-    fn keygen<R: Rng>(
+    fn keygen(
         pp: &Self::Parameters,
-        rng: &mut R,
+        entropy: [u8; 32],
     ) -> Result<(Self::PublicKey, Self::SecretKey), Error>;
 
-    fn sign<R: Rng>(
+    fn sign(
         pp: &Self::Parameters,
         sk: &Self::SecretKey,
         message: &[u8],
-        rng: &mut R,
+        entropy: [u8; 32],
     ) -> Result<Self::Signature, Error>;
 
     fn verify(
@@ -47,17 +50,17 @@ mod test {
 
     fn sign_and_verify<S: SignatureScheme>(message: &[u8]) {
         let rng = &mut test_rng();
-        let parameters = S::setup::<_>(rng).unwrap();
-        let (pk, sk) = S::keygen(&parameters, rng).unwrap();
-        let sig = S::sign(&parameters, &sk, &message, rng).unwrap();
+        let parameters = S::setup(rng.gen()).unwrap();
+        let (pk, sk) = S::keygen(&parameters, rng.gen()).unwrap();
+        let sig = S::sign(&parameters, &sk, &message, rng.gen()).unwrap();
         assert!(S::verify(&parameters, &pk, &message, &sig).unwrap());
     }
 
     fn failed_verification<S: SignatureScheme>(message: &[u8], bad_message: &[u8]) {
         let rng = &mut test_rng();
-        let parameters = S::setup::<_>(rng).unwrap();
-        let (pk, sk) = S::keygen(&parameters, rng).unwrap();
-        let sig = S::sign(&parameters, &sk, message, rng).unwrap();
+        let parameters = S::setup(rng.gen()).unwrap();
+        let (pk, sk) = S::keygen(&parameters, rng.gen()).unwrap();
+        let sig = S::sign(&parameters, &sk, message, rng.gen()).unwrap();
         assert!(!S::verify(&parameters, &pk, bad_message, &sig).unwrap());
     }
 

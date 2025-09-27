@@ -6,9 +6,7 @@ use crate::signature::SignatureScheme;
 
 pub trait SigVerifyGadget<S: SignatureScheme, ConstraintF: Field> {
     type ParametersVar: AllocVar<S::Parameters, ConstraintF> + Clone;
-
     type PublicKeyVar: ToBytesGadget<ConstraintF> + AllocVar<S::PublicKey, ConstraintF> + Clone;
-
     type SignatureVar: AllocVar<S::Signature, ConstraintF> + Clone;
 
     fn verify(
@@ -34,9 +32,9 @@ mod test {
         message: &[u8],
     ) {
         let rng = &mut test_rng();
-        let parameters = S::setup::<_>(rng).unwrap();
-        let (pk, sk) = S::keygen(&parameters, rng).unwrap();
-        let sig = S::sign(&parameters, &sk, &message, rng).unwrap();
+        let parameters = S::setup(rng.gen()).unwrap();
+        let (pk, sk) = S::keygen(&parameters, rng.gen()).unwrap();
+        let sig = S::sign(&parameters, &sk, &message, rng.gen()).unwrap();
         assert!(S::verify(&parameters, &pk, &message, &sig).unwrap());
 
         let cs = ConstraintSystem::<F>::new_ref();
@@ -44,10 +42,10 @@ mod test {
         let parameters_var = SG::ParametersVar::new_constant(cs.clone(), parameters).unwrap();
         let signature_var = SG::SignatureVar::new_witness(cs.clone(), || Ok(&sig)).unwrap();
         let pk_var = SG::PublicKeyVar::new_witness(cs.clone(), || Ok(&pk)).unwrap();
-        let mut msg_var = Vec::new();
-        for i in 0..message.len() {
-            msg_var.push(UInt8::new_witness(cs.clone(), || Ok(&message[i])).unwrap())
-        }
+        let msg_var: Vec<_> = message
+            .iter()
+            .map(|&byte| UInt8::new_witness(cs.clone(), || Ok(byte)).unwrap())
+            .collect();
         let valid_sig_var = SG::verify(&parameters_var, &pk_var, &msg_var, &signature_var).unwrap();
 
         valid_sig_var.enforce_equal(&Boolean::<F>::TRUE).unwrap();
@@ -56,9 +54,9 @@ mod test {
 
     fn failed_verification<S: SignatureScheme>(message: &[u8], bad_message: &[u8]) {
         let rng = &mut test_rng();
-        let parameters = S::setup::<_>(rng).unwrap();
-        let (pk, sk) = S::keygen(&parameters, rng).unwrap();
-        let sig = S::sign(&parameters, &sk, message, rng).unwrap();
+        let parameters = S::setup(rng.gen()).unwrap();
+        let (pk, sk) = S::keygen(&parameters, rng.gen()).unwrap();
+        let sig = S::sign(&parameters, &sk, message, rng.gen()).unwrap();
         assert!(!S::verify(&parameters, &pk, bad_message, &sig).unwrap());
     }
 
