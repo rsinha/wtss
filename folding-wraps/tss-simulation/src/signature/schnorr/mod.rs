@@ -30,7 +30,7 @@ pub type SecretKey<C> = <<C as CurveGroup>::Affine as AffineRepr>::ScalarField;
 #[derive(Clone, Default, Debug, CanonicalDeserialize, CanonicalSerialize)]
 pub struct Signature<C: CurveGroup> {
     pub prover_response: C::ScalarField,
-    pub verifier_challenge: [u8; 32],
+    pub verifier_challenge: C::ScalarField,
 }
 
 impl<C: CurveGroup + Hash> SignatureScheme for Schnorr<C>
@@ -87,15 +87,14 @@ where
             hash_input.extend_from_slice(&serialize(&prover_commitment));
             hash_input.extend_from_slice(message);
 
-            let verifier_challenge: [u8; 32] = Blake2s::digest(&hash_input).into();
+            let verifier_challenge_digest= &Blake2s::digest(&hash_input)[0..31];
+            let verifier_challenge = C::ScalarField::from_le_bytes_mod_order(verifier_challenge_digest);
 
             (random_scalar, verifier_challenge)
         };
 
-        let verifier_challenge_fe = C::ScalarField::from_le_bytes_mod_order(&verifier_challenge);
-
         // k - xe;
-        let prover_response = random_scalar - (verifier_challenge_fe * sk);
+        let prover_response = random_scalar - (verifier_challenge * sk);
         let signature = Signature { prover_response, verifier_challenge };
 
         Ok(signature)
@@ -111,12 +110,11 @@ where
             prover_response,
             verifier_challenge,
         } = signature;
-        let verifier_challenge_fe = C::ScalarField::from_le_bytes_mod_order(verifier_challenge);
         // sG = kG - eY
         // kG = sG + eY
         // so we first solve for kG.
         let mut claimed_prover_commitment = parameters.generator.mul(*prover_response);
-        let public_key_times_verifier_challenge = pk.mul(verifier_challenge_fe);
+        let public_key_times_verifier_challenge = pk.mul(verifier_challenge);
         claimed_prover_commitment += &public_key_times_verifier_challenge;
         let claimed_prover_commitment = claimed_prover_commitment.into_affine();
 
@@ -130,8 +128,9 @@ where
         hash_input.extend_from_slice(message);
 
         // cast the hash output to get e
-        let obtained_verifier_challenge = &Blake2s::digest(&hash_input)[..];
-        Ok(verifier_challenge == obtained_verifier_challenge)
+        let obtained_verifier_challenge_digest = &Blake2s::digest(&hash_input)[0..31];
+        let obtained_verifier_challenge = C::ScalarField::from_le_bytes_mod_order(obtained_verifier_challenge_digest);
+        Ok(*verifier_challenge == obtained_verifier_challenge)
     }
 }
 
@@ -157,7 +156,7 @@ impl<C: CurveGroup + Hash> ThresholdSchnorr<C> where C::ScalarField: PrimeField,
         round2_messages: &[ThresholdSchnorrMessage2<C>],
         aggregate_pk: &PublicKey<C>,
         message_to_sign: &[u8],
-    ) -> Result<[u8; 32], ThresholdSchnorrError> {
+    ) -> Result<C::ScalarField, ThresholdSchnorrError> {
         let mut aggregate_prover_commitment = C::Affine::zero();
         for (i, msg) in round2_messages.into_iter().enumerate() {
             let hash_commitment: [u8; 32] = Blake2s::digest(&serialize(msg)).into();
@@ -177,9 +176,10 @@ impl<C: CurveGroup + Hash> ThresholdSchnorr<C> where C::ScalarField: PrimeField,
         hash_input.extend_from_slice(&serialize(&aggregate_pk));
         hash_input.extend_from_slice(&serialize(&aggregate_prover_commitment));
         hash_input.extend_from_slice(message_to_sign);
-        let verifier_challenge: [u8; 32] = Blake2s::digest(&hash_input).into();
+        let verifier_challenge = &Blake2s::digest(&hash_input)[0..31];
+        let verifier_challenge_fe = C::ScalarField::from_le_bytes_mod_order(verifier_challenge);
 
-        Ok(verifier_challenge)
+        Ok(verifier_challenge_fe)
     }
 
     pub fn sign_round1(
@@ -214,12 +214,11 @@ impl<C: CurveGroup + Hash> ThresholdSchnorr<C> where C::ScalarField: PrimeField,
         let aggregate_pk = public_keys.iter().fold(C::Affine::zero(), |acc, pk| (acc + pk).into_affine());
 
         let verifier_challenge = Self::compute_challenge(parameters, round1_messages, round2_messages, &aggregate_pk, message_to_sign)?;
-        let verifier_challenge_fe = C::ScalarField::from_le_bytes_mod_order(&verifier_challenge);
 
         let random_scalar = Self::get_pseudorandom_scalar();
 
         // k - xe;
-        let prover_response = random_scalar - (verifier_challenge_fe * sk);
+        let prover_response = random_scalar - (verifier_challenge * sk);
         let signature = Signature { prover_response, verifier_challenge };
 
         Ok(signature)
@@ -241,8 +240,7 @@ impl<C: CurveGroup + Hash> ThresholdSchnorr<C> where C::ScalarField: PrimeField,
                 return Err(ThresholdSchnorrError::InvalidInput);
             }
 
-            let verifier_challenge_fe = C::ScalarField::from_le_bytes_mod_order(&sig.verifier_challenge);
-            let public_key_times_verifier_challenge = public_keys[i].mul(verifier_challenge_fe);
+            let public_key_times_verifier_challenge = public_keys[i].mul(verifier_challenge);
 
             let mut claimed_prover_commitment = parameters.generator.mul(sig.prover_response);
             claimed_prover_commitment += &public_key_times_verifier_challenge;

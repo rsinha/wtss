@@ -65,7 +65,7 @@ use ark_std::fmt::Debug;
 use core::borrow::Borrow;
 
 pub const MAX_AB_SIZE: usize = 16;
-pub const MAX_EXT_INPUTS: usize = 7 * MAX_AB_SIZE + 64 + 1;
+pub const MAX_EXT_INPUTS: usize = 7 * MAX_AB_SIZE + 3;
 type Weight = Fr;
 type AddressBookEntry = (schnorr::PublicKey<JubJub>, Weight);
 type AddressBook = [AddressBookEntry; MAX_AB_SIZE];
@@ -181,12 +181,8 @@ impl<const K: usize> FCircuit<Fr> for TSSFCircuit<K> {
             .collect::<Vec<_>>();
 
         let aggregate_signature = SSigVar {
-            verifier_challenge: (7*K..7*K + 32)
-                .map(|j| external_inputs.0[j].to_bytes_le().unwrap()[0].clone())
-                .collect(),
-            prover_response: (7*K + 32..7*K + 64)
-                .map(|j| external_inputs.0[j].to_bytes_le().unwrap()[0].clone())
-                .collect(),
+            verifier_challenge: external_inputs.0[7*K].to_bytes_le().unwrap(),
+            prover_response: external_inputs.0[7*K + 1].to_bytes_le().unwrap(),
             _group: PhantomData,
         };
 
@@ -262,7 +258,7 @@ impl<const K: usize> FCircuit<Fr> for TSSFCircuit<K> {
         let parameters_var = <SVerifyGadget as SigVerifyGadget<S, Fr>>
             ::ParametersVar::new_constant(cs.clone(), schnorr_parameters)?;
         let next_ab_hash = computed_next_state[0].to_bytes_le()?;
-        let tss_vk_hash = external_inputs.0[7*K + 64].clone();
+        let tss_vk_hash = external_inputs.0[7*K + 2].clone();
         let msg_var = next_ab_hash
             .into_iter()
             .chain(tss_vk_hash.to_bytes_le()?)
@@ -407,14 +403,10 @@ fn prepare_external_inputs(
         external_inputs_at_step.push(Fr::from(i % 2 == 0)); // even signatures present
     }
 
-    let verifier_challenge = aggregate_signature.verifier_challenge;
-    let prover_response = aggregate_signature.prover_response.into_bigint().to_bytes_le();
-    for j in 0..32 {
-        external_inputs_at_step.push(Fr::from_le_bytes_mod_order(&[verifier_challenge[j]]));
-    }
-    for j in 0..32 {
-        external_inputs_at_step.push(Fr::from_le_bytes_mod_order(&[prover_response[j]]));
-    }
+    let verifier_challenge = Fr::from_le_bytes_mod_order(&aggregate_signature.verifier_challenge.into_bigint().to_bytes_le());
+    let prover_response = Fr::from_le_bytes_mod_order(&aggregate_signature.prover_response.into_bigint().to_bytes_le());
+    external_inputs_at_step.push(verifier_challenge);
+    external_inputs_at_step.push(prover_response);
 
     external_inputs_at_step.push(hash_hints_vk(next_tss_vk));
 
@@ -425,7 +417,7 @@ fn prepare_external_inputs(
 fn main() -> Result<(), Error> {
     let _ = rayon::ThreadPoolBuilder::new().num_threads(1).build_global();
     println!("Running TSS simulation");
-    let num_steps = 100;
+    let num_steps = 20;
     let F_circuit = TSSFCircuit::<MAX_AB_SIZE>::new(())?;
 
     let params = setup(&F_circuit)?;
