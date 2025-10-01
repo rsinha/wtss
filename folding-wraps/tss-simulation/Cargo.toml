@@ -10,7 +10,7 @@ ark-ec = { workspace = true }
 ark-ff = { workspace = true, features = ["asm"] }
 ark-poly = { workspace = true }
 ark-std = { workspace = true, features = ["getrandom"] }
-ark-crypto-primitives = { workspace = true, features = ["constraints", "sponge", "crh", "prf", "parallel"] }
+ark-crypto-primitives = { workspace = true, features = ["constraints", "sponge", "crh", "prf"] }
 ark-poly-commit = { workspace = true }
 ark-relations = { workspace = true }
 ark-r1cs-std = { workspace = true }
@@ -33,10 +33,10 @@ folding-schemes = { workspace = true }
 [features]
 default = ["parallel"]
 parallel = [
-    "ark-groth16/parallel",
-    "ark-poly-commit/parallel",
-    "ark-relations/parallel",
-    "ark-r1cs-std/parallel",
+    #"ark-groth16/parallel",
+    #"ark-poly-commit/parallel",
+    #"ark-relations/parallel",
+    #"ark-r1cs-std/parallel",
 ]
 light-test = []
 

@@ -386,68 +386,6 @@ fn setup(circuit: &TSSFCircuit<MAX_AB_SIZE>) -> Result<TSSPublicParams, Error> {
     Ok(TSSPublicParams { nova_pp, nova_vp, decider_pp, decider_vp })
 }
 
-fn _load_params_from_disk() -> Result<TSSPublicParams, Error> {
-    let nova_pp_path = "/tmp/tss_nova_pp.bin";
-    let nova_vp_path = "/tmp/tss_nova_vp.bin";
-    let decider_pp_path = "/tmp/tss_decider_pp.bin";
-    let decider_vp_path = "/tmp/tss_decider_vp.bin";
-
-    let e1 = std::path::Path::new(nova_pp_path).exists();
-    let e2 = std::path::Path::new(nova_vp_path).exists();
-    let e3 = std::path::Path::new(decider_pp_path).exists();
-    let e4 = std::path::Path::new(decider_vp_path).exists();
-    if e1 && e2 && e3 && e4 {
-        println!("Loading Nova ProverParams & VerifierParams");
-        let nova_pp = std::fs::read(nova_pp_path)?;
-        let nova_vp = std::fs::read(nova_vp_path)?;
-        let decider_pp = std::fs::read(decider_pp_path)?;
-        let decider_vp = std::fs::read(decider_vp_path)?;
-
-        let nova_pp: NPP = N::pp_deserialize_with_mode(nova_pp.as_slice(), ark_serialize::Compress::Yes, ark_serialize::Validate::Yes, ())?;
-        println!("Nova ProverParam deserialized successfully");
-        let nova_vp: NVP = N::vp_deserialize_with_mode(nova_vp.as_slice(), ark_serialize::Compress::Yes, ark_serialize::Validate::Yes, ())?;
-        println!("Nova VerifierParam deserialized successfully");
-        let decider_pp = DPP::deserialize_compressed(decider_pp.as_slice())?;
-        println!("Decider PreprocessorParam deserialized successfully");
-        let decider_vp = DVP::deserialize_compressed(decider_vp.as_slice())?;
-        println!("Decider VerifierParam deserialized successfully");
-
-        Ok(TSSPublicParams {
-            nova_pp,
-            nova_vp,
-            decider_pp,
-            decider_vp,
-        })
-    } else {
-        Err(std::io::Error::new(std::io::ErrorKind::NotFound, "File does not exist")).map_err(|e| Error::from(e))
-    }
-}
-
-fn _write_params_to_disk(params: &TSSPublicParams) -> Result<(), ark_serialize::SerializationError> {
-    let mut nova_pp_serialized = vec![];
-    params.nova_pp.serialize_compressed(&mut nova_pp_serialized)?;
-    println!("Nova ProverParam serialized size: {} bytes", nova_pp_serialized.len());
-
-    let mut nova_vp_serialized = vec![];
-    params.nova_vp.serialize_compressed(&mut nova_vp_serialized)?;
-    println!("Nova VerifierParam serialized size: {} bytes", nova_vp_serialized.len());
-
-    // Serialize decider_pp and decider_vp
-    let mut decider_pp_serialized = vec![];
-    params.decider_pp.serialize_compressed(&mut decider_pp_serialized)?;
-    println!("Decider PreprocessorParam serialized size: {} bytes", decider_pp_serialized.len());
-
-    let mut decider_vp_serialized = vec![];
-    params.decider_vp.serialize_compressed(&mut decider_vp_serialized)?;
-    println!("Decider VerifierParam serialized size: {} bytes", decider_vp_serialized.len());
-
-    std::fs::write("/tmp/tss_nova_pp.bin", &nova_pp_serialized)?;
-    std::fs::write("/tmp/tss_nova_vp.bin", &nova_vp_serialized)?;
-    std::fs::write("/tmp/tss_decider_pp.bin", &decider_pp_serialized)?;
-    std::fs::write("/tmp/tss_decider_vp.bin", &decider_vp_serialized)?;
-    Ok(())
-}
-
 fn prepare_external_inputs(
     aggregate_signature: &signature::schnorr::Signature<JubJub>,
     prev_ab: &AddressBook,
@@ -597,6 +535,7 @@ fn main() -> Result<(), Error> {
 
             let mut decider_vp_serialized = vec![];
             params.decider_vp.serialize_compressed(&mut decider_vp_serialized)?;
+            println!("Decider VP serialized size: {} bytes", decider_vp_serialized.len());
 
             assert!(verify_tss(&decider_vp_serialized, &proof_serialized)?);
         }
