@@ -58,8 +58,8 @@ use folding_schemes::folding::traits::CommittedInstanceOps;
 
 /********************************* Parameters *********************************/
 
-pub const MAX_AB_SIZE: usize = 128; // we need to pad up to this size
-pub const MAX_EXT_INPUTS: usize = 7 * MAX_AB_SIZE + 64 + 1;
+pub const MAX_AB_SIZE: usize = 16; // we need to pad up to this size
+pub const MAX_EXT_INPUTS: usize = 4 * MAX_AB_SIZE + 4;
 pub const ENTROPY_SIZE: usize = 32; // size of the seed for key generation
 
 /********************************* Configurable Types *********************************/
@@ -188,30 +188,13 @@ impl<const K: usize> FCircuit<Fr> for TSSFCircuit<K> {
             .map(|i| external_inputs.0[3*i + 2].clone())
             .collect::<Vec<_>>();
 
-        let next_pks = (0..K)
-            .map(|i| SchnorrPubKeyVar::new_witness(cs.clone(), || Ok(
-                ark_ed_on_bn254::EdwardsAffine::new(
-                    external_inputs.0[3*K + 3*i + 0].value()?,
-                    external_inputs.0[3*K + 3*i + 1].value()?
-                )
-            )).unwrap())
-            .collect::<Vec<_>>();
-
-        let _next_weights = (0..K)
-            .map(|i| external_inputs.0[3*K + 3*i + 2].clone())
-            .collect::<Vec<_>>();
-
         let present_bits = (0..K)
-            .map(|i| external_inputs.0[6*K + i].to_bytes_le().unwrap()[0].clone())
+            .map(|i| external_inputs.0[3*K + i].to_bytes_le().unwrap()[0].clone())
             .collect::<Vec<_>>();
 
         let aggregate_signature = SchnorrSignatureVar {
-            verifier_challenge: (7*K..7*K + 32)
-                .map(|j| external_inputs.0[j].to_bytes_le().unwrap()[0].clone())
-                .collect(),
-            prover_response: (7*K + 32..7*K + 64)
-                .map(|j| external_inputs.0[j].to_bytes_le().unwrap()[0].clone())
-                .collect(),
+            verifier_challenge: external_inputs.0[4*K + 0].to_bytes_le().unwrap(),
+            prover_response: external_inputs.0[4*K + 1].to_bytes_le().unwrap(),
             _group: PhantomData,
         };
 
@@ -263,31 +246,13 @@ impl<const K: usize> FCircuit<Fr> for TSSFCircuit<K> {
             poseidon_output.to_constraint_field()?
         };
 
-        let computed_next_state = {
-            let x_coords: Vec<FpVar<Fr>> = (0..K)
-                .map(|i| external_inputs.0[3*K + 3*i].clone())
-                .collect();
-            let y_coords: Vec<FpVar<Fr>> = (0..K)
-                .map(|i| external_inputs.0[3*K + 3*i + 1].clone())
-                .collect();
-            let weights: Vec<FpVar<Fr>> = (0..K)
-                .map(|i| external_inputs.0[3*K + 3*i + 2].clone())
-                .collect();
-            let poseidon_input: Vec<FpVar<Fr>> = x_coords
-                .into_iter()
-                .chain(y_coords.into_iter())
-                .chain(weights.into_iter())
-                .collect();
-            let poseidon_output = PoseidonCRHGadget::evaluate(&poseidon_config_var, &poseidon_input)?;
-            poseidon_output.to_constraint_field()?
-        };
-
         let schnorr_parameters = Schnorr::setup(test_rng().gen()).unwrap();
         let parameters_var = <SchnorrVerifyGadget as SigVerifyGadget<Schnorr, Fr>>
             ::ParametersVar::new_constant(cs.clone(), schnorr_parameters)?;
-        let next_ab_hash = computed_next_state[0].to_bytes_le()?;
-        let tss_vk_hash = external_inputs.0[7*K + 64].clone();
+        let next_ab_hash = external_inputs.0[4*K + 2].clone();
+        let tss_vk_hash = external_inputs.0[4*K + 3].clone();
         let msg_var = next_ab_hash
+            .to_bytes_le()?
             .into_iter()
             .chain(tss_vk_hash.to_bytes_le()?)
             .collect::<Vec<_>>();
@@ -301,13 +266,9 @@ impl<const K: usize> FCircuit<Fr> for TSSFCircuit<K> {
             prev_pk_vars[i].y.enforce_equal(&external_inputs.0[3*i + 1])?;
         }
 
-        for i in 0..K {
-            next_pks[i].pub_key.x.enforce_equal(&external_inputs.0[3*K + 3*i + 0])?;
-            next_pks[i].pub_key.y.enforce_equal(&external_inputs.0[3*K + 3*i + 1])?;
-        }
         recomputed_prev_state[0].enforce_equal(&z_i[0])?;
 
-        Ok(vec![computed_next_state[0].clone(), tss_vk_hash])
+        Ok(vec![next_ab_hash, tss_vk_hash])
     }
 }
 
@@ -357,24 +318,19 @@ fn prepare_external_inputs(
         external_inputs_at_step.push(prev_ab[i].0.y);
         external_inputs_at_step.push(prev_ab[i].1);
     }
-    for i in 0..MAX_AB_SIZE {
-        external_inputs_at_step.push(next_ab[i].0.x);
-        external_inputs_at_step.push(next_ab[i].0.y);
-        external_inputs_at_step.push(next_ab[i].1);
-    }
+
     for i in 0..MAX_AB_SIZE {
         external_inputs_at_step.push(Fr::from(bitvector[i])); // even signatures present
     }
 
-    let verifier_challenge = aggregate_signature.verifier_challenge;
-    let prover_response = aggregate_signature.prover_response.into_bigint().to_bytes_le();
-    for j in 0..32 {
-        external_inputs_at_step.push(Fr::from_le_bytes_mod_order(&[verifier_challenge[j]]));
-    }
-    for j in 0..32 {
-        external_inputs_at_step.push(Fr::from_le_bytes_mod_order(&[prover_response[j]]));
-    }
+    let verifier_challenge = Fr::from_le_bytes_mod_order(
+        &aggregate_signature.verifier_challenge.into_bigint().to_bytes_le());
+    let prover_response = Fr::from_le_bytes_mod_order(
+        &aggregate_signature.prover_response.into_bigint().to_bytes_le());
+    external_inputs_at_step.push(verifier_challenge);
+    external_inputs_at_step.push(prover_response);
 
+    external_inputs_at_step.push(hash_addressbook(next_ab));
     external_inputs_at_step.push(hash_hints_vk(next_tss_vk));
 
     external_inputs_at_step
@@ -474,7 +430,11 @@ impl WRAPS {
                 assert!(round1_messages.len() == public_keys.len());
                 assert!(round2_messages.len() == 0);
                 assert!(round3_messages.len() == 0);
-                let r2_msg: ThresholdSchnorrR2Msg = ThresholdSchnorr::sign_round2(&pp).map_err(|_| WRAPSError::CryptographyError)?;
+                let r1_msgs: Vec<ThresholdSchnorrR1Msg> = round1_messages
+                    .iter()
+                    .map(|m| ThresholdSchnorrR1Msg::deserialize_uncompressed(&mut &m[..]).unwrap())
+                    .collect();
+                let r2_msg: ThresholdSchnorrR2Msg = ThresholdSchnorr::sign_round2(&pp, &r1_msgs).map_err(|_| WRAPSError::CryptographyError)?;
                 let r2_msg_encoded = utils::serialize(&r2_msg);
                 Ok(SigningProtocolObject::ProtocolMessage(r2_msg_encoded))
             },
@@ -831,6 +791,7 @@ mod tests {
         let (mut prev_ab, mut prev_keys) = (genesis_ab, genesis_keys);
         // compute a step of the IVC
         for i in 0..num_steps {
+            println!("Step {}", i);
             let (next_ab, next_keys) = if i == 0 {
                 (prev_ab.clone(), prev_keys.clone())
             } else {

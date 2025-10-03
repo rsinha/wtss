@@ -94,8 +94,11 @@ where
             (),
         )?;
         let obtained_verifier_challenge = ROGadget::evaluate(&b2s_params, &hash_input)?.0;
+        let obtained_verifier_challenge = obtained_verifier_challenge[0..verifier_challenge.len() - 1].to_vec();
 
-        obtained_verifier_challenge.is_eq(&verifier_challenge.to_vec())
+        let expected_verifier_challenge = verifier_challenge[0..verifier_challenge.len() - 1].to_vec();
+
+        obtained_verifier_challenge.is_eq(&expected_verifier_challenge)
     }
 }
 
@@ -172,7 +175,7 @@ where
         f().and_then(|val| {
             let cs = cs.into();
             let response_bytes = super::serialize(&val.borrow().prover_response);
-            let challenge_bytes = val.borrow().verifier_challenge;
+            let challenge_bytes = super::serialize(&val.borrow().verifier_challenge);
             let mut prover_response = Vec::<UInt8<ConstraintF<C>>>::new();
             let mut verifier_challenge = Vec::<UInt8<ConstraintF<C>>>::new();
             for byte in &response_bytes {

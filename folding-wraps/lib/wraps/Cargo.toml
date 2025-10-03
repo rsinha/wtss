@@ -29,6 +29,9 @@ rand_chacha = { workspace = true }
 
 folding-schemes = { workspace = true }
 
+[profile.dev]
+opt-level = 3
+
 [features]
 default = ["parallel"]
 parallel = [
