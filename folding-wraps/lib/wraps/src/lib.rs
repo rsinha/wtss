@@ -233,7 +233,7 @@ impl<const K: usize> FCircuit<Fr> for TSSFCircuit<K> {
             let x_coords: Vec<FpVar<Fr>> = (0..K)
                 .map(|i| external_inputs.0[3*i].clone())
                 .collect();
-            let y_coords: Vec<FpVar<Fr>> = (0..K)
+            let _y_coords: Vec<FpVar<Fr>> = (0..K)
                 .map(|i| external_inputs.0[3*i + 1].clone())
                 .collect();
             let weights: Vec<FpVar<Fr>> = (0..K)
@@ -241,7 +241,7 @@ impl<const K: usize> FCircuit<Fr> for TSSFCircuit<K> {
                 .collect();
             let poseidon_input: Vec<FpVar<Fr>> = x_coords
                 .into_iter()
-                .chain(y_coords.into_iter())
+                //.chain(y_coords.into_iter())
                 .chain(weights.into_iter())
                 .collect();
             let poseidon_output = PoseidonCRHGadget::evaluate(&poseidon_config_var, &poseidon_input)?;
@@ -294,7 +294,7 @@ fn hash_addressbook(ab: &AddressBook) -> Fr {
         .iter()
         .map(|abe| abe.0.x)
         .collect();
-    let ycoords: Vec<Fr> = ab
+    let _ycoords: Vec<Fr> = ab
         .iter()
         .map(|abe| abe.0.y)
         .collect();
@@ -303,7 +303,7 @@ fn hash_addressbook(ab: &AddressBook) -> Fr {
         .map(|abe| abe.1)
         .collect();
     let poseidon_input: Vec<Fr> = xcoords.into_iter()
-        .chain(ycoords.into_iter())
+        //.chain(ycoords.into_iter())
         .chain(weights.into_iter())
         .collect();
     let out_bytes = PoseidonCRH::evaluate(&poseidon_canonical_config::<Fr>(), poseidon_input).unwrap();
