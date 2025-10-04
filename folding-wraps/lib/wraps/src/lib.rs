@@ -226,7 +226,9 @@ impl<const K: usize> FCircuit<Fr> for TSSFCircuit<K> {
         aggregate_pubkey.x.enforce_equal(&aggregate_pubkey_var.pub_key.x)?;
         aggregate_pubkey.y.enforce_equal(&aggregate_pubkey_var.pub_key.y)?;
 
-        let poseidon_config_var = PoseidonCRHParametersVar::new_constant(cs.clone(), poseidon_canonical_config::<Fr>())?;
+        let poseidon_config_var = PoseidonCRHParametersVar::new_constant(
+            cs.clone(), poseidon_canonical_config::<Fr>()
+        )?;
         let recomputed_prev_state = {
             let x_coords: Vec<FpVar<Fr>> = (0..K)
                 .map(|i| external_inputs.0[3*i].clone())
@@ -256,7 +258,12 @@ impl<const K: usize> FCircuit<Fr> for TSSFCircuit<K> {
             .into_iter()
             .chain(tss_vk_hash.to_bytes_le()?)
             .collect::<Vec<_>>();
-        let valid_sig_var = <SchnorrVerifyGadget as SigVerifyGadget<Schnorr, Fr>>::verify(&parameters_var, &aggregate_pubkey_var, &msg_var, &aggregate_signature)?;
+        let valid_sig_var = <SchnorrVerifyGadget as SigVerifyGadget<Schnorr, Fr>>::verify(
+            &parameters_var,
+            &aggregate_pubkey_var,
+            &msg_var,
+            &aggregate_signature
+        )?;
         valid_sig_var.enforce_equal(&Boolean::<Fr>::TRUE)?;
 
         for i in 0..K {
@@ -634,7 +641,10 @@ impl WRAPS {
 
         let decider_vp_serialized = Self::get_wraps_verification_key_bytes(vk).unwrap();
 
-        assert!(Self::verify_compressed_wraps_proof(&decider_vp_serialized, &compressed_proof_serialized).map_err(|_| WRAPSError::CryptographyError)?);
+        assert!(Self::verify_compressed_wraps_proof(
+            &decider_vp_serialized,
+            &compressed_proof_serialized
+        ).map_err(|_| WRAPSError::CryptographyError)?);
 
         Ok((next_ivc_proof_encoded, compressed_proof_serialized))
     }
@@ -774,7 +784,7 @@ mod tests {
 
     #[test]
     fn wraps_simulation() {
-        let num_steps = 7;
+        let num_steps = 70;
 
         let schnorr_parameters = Schnorr::setup([0u8; 32]).unwrap();
         let (wraps_pk, wraps_vk) = WRAPS::setup_prover().unwrap();
@@ -791,7 +801,6 @@ mod tests {
         let (mut prev_ab, mut prev_keys) = (genesis_ab, genesis_keys);
         // compute a step of the IVC
         for i in 0..num_steps {
-            println!("Step {}", i);
             let (next_ab, next_keys) = if i == 0 {
                 (prev_ab.clone(), prev_keys.clone())
             } else {
