@@ -1,7 +1,6 @@
 pub mod circuits;
 pub mod hypernova;
 pub mod nova;
-pub mod protogalaxy;
 pub mod traits;
 
 #[cfg(test)]
@@ -16,7 +15,6 @@ pub mod tests {
     use crate::folding::{
         hypernova::HyperNova,
         nova::{Nova, PreprocessorParam as NovaPreprocessorParam},
-        protogalaxy::ProtoGalaxy,
     };
     use crate::frontend::utils::CubicFCircuit;
     use crate::frontend::FCircuit;
@@ -49,11 +47,6 @@ pub mod tests {
             false,
         >;
         test_serialize_ivc_opt::<G1, G2, FC, HN>("hypernova".to_string(), prep_param)?;
-
-        // test ProtoGalaxy
-        type P = ProtoGalaxy<G1, G2, FC, Pedersen<G1>, Pedersen<G2>>;
-        let prep_param = (poseidon_config, f_circuit);
-        test_serialize_ivc_opt::<G1, G2, FC, P>("protogalaxy".to_string(), prep_param)?;
         Ok(())
     }
 

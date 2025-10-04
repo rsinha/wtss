@@ -42,8 +42,6 @@ pub enum Error {
     PolyCommitError(#[from] ark_poly_commit::Error),
     #[error("crate::utils::espresso::virtual_polynomial::ArithErrors")]
     ArithError(#[from] utils::espresso::virtual_polynomial::ArithErrors),
-    #[error(transparent)]
-    ProtoGalaxy(folding::protogalaxy::ProtoGalaxyError),
     #[error("std::io::Error")]
     IOError(#[from] std::io::Error),
 
