@@ -40,8 +40,6 @@ pub enum Error {
     SerializationError(#[from] ark_serialize::SerializationError),
     #[error("ark_poly_commit::Error")]
     PolyCommitError(#[from] ark_poly_commit::Error),
-    #[error("crate::utils::espresso::virtual_polynomial::ArithErrors")]
-    ArithError(#[from] utils::espresso::virtual_polynomial::ArithErrors),
     #[error("std::io::Error")]
     IOError(#[from] std::io::Error),
 

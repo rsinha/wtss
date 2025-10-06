@@ -3,7 +3,6 @@ use ark_relations::gr1cs::ConstraintSystem;
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 use ark_std::rand::Rng;
 
-use super::ccs::CCS;
 use super::{Arith, ArithRelation, ArithSerializer};
 use crate::folding::traits::Dummy;
 use crate::utils::vec::{
@@ -119,17 +118,6 @@ impl<F: PrimeField> R1CS<F> {
             A: SparseMatrix::rand(rng, n_rows, n_cols),
             B: SparseMatrix::rand(rng, n_rows, n_cols),
             C: SparseMatrix::rand(rng, n_rows, n_cols),
-        }
-    }
-}
-
-impl<F: PrimeField> From<CCS<F>> for R1CS<F> {
-    fn from(ccs: CCS<F>) -> Self {
-        R1CS::<F> {
-            l: ccs.n_public_inputs(),
-            A: ccs.M[0].clone(),
-            B: ccs.M[1].clone(),
-            C: ccs.M[2].clone(),
         }
     }
 }

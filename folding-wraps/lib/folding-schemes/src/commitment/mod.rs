@@ -5,7 +5,6 @@ use ark_std::rand::RngCore;
 use crate::transcript::Transcript;
 use crate::{Curve, Error};
 
-pub mod ipa;
 pub mod kzg;
 pub mod pedersen;
 
@@ -79,7 +78,6 @@ mod tests {
     use ark_std::Zero;
     use ark_std::{test_rng, UniformRand};
 
-    use super::ipa::IPA;
     use super::kzg::{ProverKey, KZG};
     use super::pedersen::Pedersen;
     use crate::transcript::poseidon::poseidon_canonical_config;
@@ -102,15 +100,6 @@ mod tests {
 
         // test with Pedersen
         let _ = test_homomorphic_property_using_Commitment_trait_opt::<G1, Pedersen<G1>>(
-            &poseidon_config,
-            &pedersen_params,
-            &pedersen_params,
-            r,
-            &v_1,
-            &v_2,
-        )?;
-        // test with IPA
-        let _ = test_homomorphic_property_using_Commitment_trait_opt::<G1, IPA<G1>>(
             &poseidon_config,
             &pedersen_params,
             &pedersen_params,

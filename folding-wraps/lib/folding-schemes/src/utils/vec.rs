@@ -4,9 +4,7 @@ use ark_poly::{
 };
 pub use ark_relations::gr1cs::Matrix as R1CSMatrix;
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
-use ark_std::{cfg_iter, rand::Rng};
-#[cfg(feature = "parallel")]
-use rayon::prelude::*;
+use ark_std::{rand::Rng};
 
 use crate::{folding::traits::Dummy, Error};
 
@@ -90,7 +88,7 @@ pub fn vec_add<F: PrimeField>(a: &[F], b: &[F]) -> Result<Vec<F>, Error> {
             b.len(),
         ));
     }
-    Ok(cfg_iter!(a).zip(b).map(|(x, y)| *x + y).collect())
+    Ok(a.iter().zip(b).map(|(x, y)| *x + y).collect())
 }
 
 pub fn vec_sub<F: PrimeField>(a: &[F], b: &[F]) -> Result<Vec<F>, Error> {
@@ -102,15 +100,15 @@ pub fn vec_sub<F: PrimeField>(a: &[F], b: &[F]) -> Result<Vec<F>, Error> {
             b.len(),
         ));
     }
-    Ok(cfg_iter!(a).zip(b).map(|(x, y)| *x - y).collect())
+    Ok(a.iter().zip(b).map(|(x, y)| *x - y).collect())
 }
 
 pub fn vec_scalar_mul<F: PrimeField>(vec: &[F], c: &F) -> Vec<F> {
-    cfg_iter!(vec).map(|a| *a * c).collect()
+    vec.iter().map(|a| *a * c).collect()
 }
 
 pub fn is_zero_vec<F: PrimeField>(vec: &[F]) -> bool {
-    cfg_iter!(vec).all(|a| a.is_zero())
+    vec.iter().all(|a| a.is_zero())
 }
 
 pub fn mat_vec_mul_dense<F: PrimeField>(M: &[Vec<F>], z: &[F]) -> Result<Vec<F>, Error> {
@@ -126,7 +124,7 @@ pub fn mat_vec_mul_dense<F: PrimeField>(M: &[Vec<F>], z: &[F]) -> Result<Vec<F>,
         ));
     }
 
-    Ok(cfg_iter!(M)
+    Ok(M.iter()
         .map(|row| row.iter().zip(z).map(|(a, b)| *a * b).sum())
         .collect())
 }
@@ -140,7 +138,8 @@ pub fn mat_vec_mul<F: PrimeField>(M: &SparseMatrix<F>, z: &[F]) -> Result<Vec<F>
             z.len(),
         ));
     }
-    Ok(cfg_iter!(M.coeffs)
+    Ok(M.coeffs
+        .iter()
         .map(|row| row.iter().map(|(value, col_i)| *value * z[*col_i]).sum())
         .collect())
 }
@@ -167,7 +166,7 @@ pub fn hadamard<F: PrimeField>(a: &[F], b: &[F]) -> Result<Vec<F>, Error> {
             b.len(),
         ));
     }
-    Ok(cfg_iter!(a).zip(b).map(|(a, b)| *a * b).collect())
+    Ok(a.iter().zip(b).map(|(a, b)| *a * b).collect())
 }
 
 /// returns the interpolated polynomial of degree=v.len().next_power_of_two(), which passes through all

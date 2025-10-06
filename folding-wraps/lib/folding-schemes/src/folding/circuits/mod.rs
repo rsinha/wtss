@@ -5,8 +5,7 @@ use ark_ff::Field;
 pub mod cyclefold;
 pub mod decider;
 pub mod nonnative;
-pub mod sum_check;
-pub mod utils;
+//pub mod utils;
 
 /// CF1 uses the ScalarField of the given C. CF1 represents the ConstraintField used for the main
 /// folding circuit which is over E1::Fr, where E1 is the main curve where we do the folding.

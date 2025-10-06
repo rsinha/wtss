@@ -4,7 +4,7 @@ use ark_std::rand::RngCore;
 
 use crate::{commitment::CommitmentScheme, folding::traits::Dummy, Curve, Error};
 
-pub mod ccs;
+//pub mod ccs;
 pub mod r1cs;
 
 /// [`Arith`] is a trait about constraint systems (R1CS, CCS, etc.), where we

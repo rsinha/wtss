@@ -16,8 +16,6 @@ use ark_poly_commit::kzg10::{
 };
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize, Valid};
 use ark_std::{borrow::Cow, fmt::Debug, marker::PhantomData, rand::RngCore, One, Zero};
-#[cfg(feature = "parallel")]
-use rayon::prelude::*;
 
 use super::CommitmentScheme;
 use crate::transcript::Transcript;
@@ -273,9 +271,7 @@ fn skip_first_zero_coeffs_and_convert_to_bigints<F: PrimeField, P: DenseUVPolyno
 }
 
 fn convert_to_bigints<F: PrimeField>(p: &[F]) -> Vec<F::BigInt> {
-    ark_std::cfg_iter!(p)
-        .map(|s| s.into_bigint())
-        .collect::<Vec<_>>()
+    p.iter().map(|s| s.into_bigint()).collect::<Vec<_>>()
 }
 
 #[cfg(test)]
