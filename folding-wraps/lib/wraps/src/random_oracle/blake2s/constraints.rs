@@ -16,7 +16,6 @@ impl<F: PrimeField> RandomOracleGadget<blake2s::RO, F> for ROGadget {
     type OutputVar = OutputVar<F>;
     type ParametersVar = ParametersVar;
 
-    // #[tracing::instrument(target = "r1cs", skip(input, r))]
     fn evaluate(
         _: &Self::ParametersVar,
         input: &[UInt8<F>],
@@ -35,7 +34,6 @@ impl<F: PrimeField> RandomOracleGadget<blake2s::RO, F> for ROGadget {
 }
 
 impl<ConstraintF: Field> AllocVar<(), ConstraintF> for ParametersVar {
-    // #[tracing::instrument(target = "r1cs", skip(_cs, _f))]
     fn new_variable<T: Borrow<()>>(
         _cs: impl Into<Namespace<ConstraintF>>,
         _f: impl FnOnce() -> Result<T, SynthesisError>,

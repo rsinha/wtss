@@ -20,7 +20,6 @@ ark-groth16 = { workspace = true }
 ark-bn254 = { workspace = true, features = ["r1cs"] }
 ark-grumpkin = { workspace = true, features = ["r1cs"] }
 thiserror = { workspace = true }
-rayon = { workspace = true }
 num-bigint = { workspace = true, features = ["rand"] }
 num-integer = { workspace = true }
 sha3 = { workspace = true }
