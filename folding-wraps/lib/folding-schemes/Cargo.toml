@@ -37,31 +37,3 @@ ark-mnt6-298 = { workspace = true, features = ["r1cs"] }
 default = ["parallel"]
 parallel = []
 light-test = []
-
-
-[[bench]]
-name = "nova"
-path = "../../benches/nova.rs"
-harness = false
-
-[[bench]]
-name = "hypernova"
-path = "../../benches/hypernova.rs"
-harness = false
-
-[[bench]]
-name = "protogalaxy"
-path = "../../benches/protogalaxy.rs"
-harness = false
-
-[[example]]
-name = "sha256"
-path = "../../examples/sha256.rs"
-
-[[example]]
-name = "multi_inputs"
-path = "../../examples/multi_inputs.rs"
-
-[[example]]
-name = "external_inputs"
-path = "../../examples/external_inputs.rs"
