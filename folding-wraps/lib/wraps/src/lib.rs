@@ -9,7 +9,6 @@ mod signature;
 mod random_oracle;
 mod utils;
 
-use sha3::digest::typenum::bit;
 use signature::{*};
 
 /********************************* Imports *********************************/

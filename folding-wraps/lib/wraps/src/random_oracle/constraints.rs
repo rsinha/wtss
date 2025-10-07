@@ -1,10 +1,9 @@
-use ark_ff::Field;
 use core::fmt::Debug;
+use ark_ff::Field;
+use ark_relations::gr1cs::SynthesisError;
+use ark_r1cs_std::prelude::*;
 
 use crate::random_oracle::RandomOracle;
-use ark_relations::gr1cs::SynthesisError;
-
-use ark_r1cs_std::prelude::*;
 
 pub trait RandomOracleGadget<RO: RandomOracle, ConstraintF: Field>: Sized {
     type OutputVar: EqGadget<ConstraintF>

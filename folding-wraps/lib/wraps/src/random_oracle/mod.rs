@@ -2,12 +2,10 @@
 #![allow(dead_code)]
 
 use ark_serialize::{ CanonicalDeserialize, CanonicalSerialize };
-use ark_std::hash::Hash;
-use ark_std::rand::Rng;
+use ark_std::{rand::Rng, hash::Hash};
+use ark_crypto_primitives::Error;
 
 pub mod blake2s;
-
-use ark_crypto_primitives::Error;
 
 pub mod constraints;
 pub use constraints::*;

@@ -1,8 +1,7 @@
 use ark_ec::CurveGroup;
 use ark_ff::Field;
 use ark_r1cs_std::{uint8::UInt8, prelude::*};
-use ark_relations::gr1cs::ConstraintSystemRef;
-use ark_relations::gr1cs::{Namespace, SynthesisError};
+use ark_relations::gr1cs::{ConstraintSystemRef, Namespace, SynthesisError};
 use ark_std::vec::Vec;
 
 use super::super::super::random_oracle::blake2s::constraints::{ParametersVar as B2SParamsVar, ROGadget};
