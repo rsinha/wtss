@@ -144,8 +144,7 @@ pub type ThresholdSchnorrMessage3<C> = Signature<C>;
 
 impl<C: CurveGroup + Hash> ThresholdSchnorr<C> where C::ScalarField: PrimeField,
 {
-    fn get_pseudorandom_scalar() -> C::ScalarField {
-        let entropy = [0u8; 32]; // TODO: replace with real musig
+    fn get_pseudorandom_scalar(entropy: [u8; 32]) -> C::ScalarField {
         let mut csprng = ark_std::rand::rngs::StdRng::from_seed(entropy);
         C::ScalarField::rand(&mut csprng)
     }
@@ -184,8 +183,9 @@ impl<C: CurveGroup + Hash> ThresholdSchnorr<C> where C::ScalarField: PrimeField,
 
     pub fn sign_round1(
         parameters: &Parameters<C>,
+        protocol_instance_entropy: [u8; 32],
     ) -> Result<ThresholdSchnorrMessage1, Error> {
-        let random_scalar = Self::get_pseudorandom_scalar();
+        let random_scalar = Self::get_pseudorandom_scalar(protocol_instance_entropy);
 
         let prover_commitment = parameters.generator.mul(random_scalar).into_affine();
         let hash_commitment: [u8; 32] = Blake2s::digest(&serialize(&prover_commitment)).into();
@@ -195,9 +195,10 @@ impl<C: CurveGroup + Hash> ThresholdSchnorr<C> where C::ScalarField: PrimeField,
 
     pub fn sign_round2(
         parameters: &Parameters<C>,
+        protocol_instance_entropy: [u8; 32],
         _round1_messages: &[ThresholdSchnorrMessage1],
     ) -> Result<ThresholdSchnorrMessage2<C>, Error> {
-        let random_scalar = Self::get_pseudorandom_scalar();
+        let random_scalar = Self::get_pseudorandom_scalar(protocol_instance_entropy);
         let prover_commitment = parameters.generator.mul(random_scalar).into_affine();
 
         Ok(prover_commitment)
@@ -205,6 +206,7 @@ impl<C: CurveGroup + Hash> ThresholdSchnorr<C> where C::ScalarField: PrimeField,
 
     pub fn sign_round3(
         parameters: &Parameters<C>,
+        protocol_instance_entropy: [u8; 32],
         message_to_sign: &[u8],
         sk: &SecretKey<C>,
         public_keys: &[PublicKey<C>],
@@ -215,7 +217,7 @@ impl<C: CurveGroup + Hash> ThresholdSchnorr<C> where C::ScalarField: PrimeField,
 
         let verifier_challenge = Self::compute_challenge(parameters, round1_messages, round2_messages, &aggregate_pk, message_to_sign)?;
 
-        let random_scalar = Self::get_pseudorandom_scalar();
+        let random_scalar = Self::get_pseudorandom_scalar(protocol_instance_entropy);
 
         // k - xe;
         let prover_response = random_scalar - (verifier_challenge * sk);
@@ -270,7 +272,7 @@ mod tests {
 
     fn get_entropy() -> [u8; 32] {
         let mut entropy = [0u8; 32];
-        ark_std::test_rng().fill_bytes(&mut entropy);
+        ark_std::rand::thread_rng().fill_bytes(&mut entropy);
         entropy
     }
 
@@ -308,17 +310,20 @@ mod tests {
         let aggregate_pk = (pk1 + pk2).into_affine();
         let message = b"threshold schnorr";
 
+        let protocol_instance_entropy1 = get_entropy();
+        let protocol_instance_entropy2 = get_entropy();
         // Round 1
-        let r1_msg1 = ThresholdSchnorr::<C>::sign_round1(&params).unwrap();
-        let r1_msg2 = ThresholdSchnorr::<C>::sign_round1(&params).unwrap();
+        let r1_msg1 = ThresholdSchnorr::<C>::sign_round1(&params, protocol_instance_entropy1).unwrap();
+        let r1_msg2 = ThresholdSchnorr::<C>::sign_round1(&params, protocol_instance_entropy2).unwrap();
 
         // Round 2
-        let r2_msg1 = ThresholdSchnorr::<C>::sign_round2(&params, &[r1_msg1, r1_msg2]).unwrap();
-        let r2_msg2 = ThresholdSchnorr::<C>::sign_round2(&params, &[r1_msg1, r1_msg2]).unwrap();
+        let r2_msg1 = ThresholdSchnorr::<C>::sign_round2(&params, protocol_instance_entropy1, &[r1_msg1, r1_msg2]).unwrap();
+        let r2_msg2 = ThresholdSchnorr::<C>::sign_round2(&params, protocol_instance_entropy2, &[r1_msg1, r1_msg2]).unwrap();
 
         // Round 3
         let r3_msg1 = ThresholdSchnorr::<C>::sign_round3(
             &params,
+            protocol_instance_entropy1,
             message,
             &sk1,
             &[pk1, pk2],
@@ -328,6 +333,7 @@ mod tests {
 
         let r3_msg2 = ThresholdSchnorr::<C>::sign_round3(
             &params,
+            protocol_instance_entropy2,
             message,
             &sk2,
             &[pk1, pk2],

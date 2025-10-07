@@ -414,6 +414,7 @@ impl WRAPS {
 
     pub fn signing_protocol(
         phase: SigningProtocolPhase, // either R1, R2, R3, or Aggregate
+        protocol_instance_entropy: [u8; ENTROPY_SIZE], // reuse in all rounds of a protocol instance
         message_to_sign: &[u8], // message to sign should be output of rotation_message(..)
         signing_key: Option<&SchnorrPrivKey>, // should be None if phase == Aggregate
         public_keys: &[SchnorrPubKey], // can be [] if phase == R1, but must be non-empty otherwise
@@ -428,7 +429,10 @@ impl WRAPS {
                 assert!(round1_messages.len() == 0);
                 assert!(round2_messages.len() == 0);
                 assert!(round3_messages.len() == 0);
-                let r1_msg: ThresholdSchnorrR1Msg = ThresholdSchnorr::sign_round1(&pp).map_err(|_| WRAPSError::CryptographyError)?;
+                let r1_msg: ThresholdSchnorrR1Msg = ThresholdSchnorr::sign_round1(
+                    &pp,
+                    protocol_instance_entropy
+                ).map_err(|_| WRAPSError::CryptographyError)?;
                 let r1_msg_encoded = utils::serialize(&r1_msg);
                 Ok(SigningProtocolObject::ProtocolMessage(r1_msg_encoded))
             },
@@ -440,7 +444,11 @@ impl WRAPS {
                     .iter()
                     .map(|m| ThresholdSchnorrR1Msg::deserialize_uncompressed(&mut &m[..]).unwrap())
                     .collect();
-                let r2_msg: ThresholdSchnorrR2Msg = ThresholdSchnorr::sign_round2(&pp, &r1_msgs).map_err(|_| WRAPSError::CryptographyError)?;
+                let r2_msg: ThresholdSchnorrR2Msg = ThresholdSchnorr::sign_round2(
+                    &pp,
+                    protocol_instance_entropy,
+                    &r1_msgs
+                ).map_err(|_| WRAPSError::CryptographyError)?;
                 let r2_msg_encoded = utils::serialize(&r2_msg);
                 Ok(SigningProtocolObject::ProtocolMessage(r2_msg_encoded))
             },
@@ -458,6 +466,7 @@ impl WRAPS {
                     .collect();
                 let r3_msg = ThresholdSchnorr::sign_round3(
                     &pp,
+                    protocol_instance_entropy,
                     message_to_sign,
                     signing_key.unwrap(), 
                     public_keys,
@@ -716,12 +725,19 @@ mod tests {
         (pks, sk_refs)
     }
 
-    fn threshold_sign(message: &[u8], pks: &[SchnorrPubKey], sk_refs: &[&SchnorrPrivKey]) -> SchnorrSignature {
+    fn threshold_sign(message_to_sign: &[u8], pks: &[SchnorrPubKey], sk_refs: &[&SchnorrPrivKey]) -> SchnorrSignature {
+        let n = pks.len();
+        let rng = &mut thread_rng();
+        let seeds: Vec<[u8; ENTROPY_SIZE]> = (0..pks.len())
+            .map(|_| rng.gen())
+            .collect();
+
         // Round 1 for each participant
-        let r1_msgs: Vec<SigningProtocolMessage> = (0..pks.len())
-            .map(|_| match WRAPS::signing_protocol(
+        let r1_msgs: Vec<SigningProtocolMessage> = (0..n)
+            .map(|i| match WRAPS::signing_protocol(
                 SigningProtocolPhase::R1,
-                message,
+                seeds[i],
+                message_to_sign,
                 None,
                 &[],
                 &[],
@@ -734,10 +750,11 @@ mod tests {
             .collect();
 
         // Round 2 for each participant
-        let r2_msgs: Vec<SigningProtocolMessage> = (0..pks.len())
-            .map(|_| match WRAPS::signing_protocol(
+        let r2_msgs: Vec<SigningProtocolMessage> = (0..n)
+            .map(|i| match WRAPS::signing_protocol(
                 SigningProtocolPhase::R2,
-                message,
+                seeds[i],
+                message_to_sign,
                 None,
                 pks,
                 &r1_msgs,
@@ -750,12 +767,12 @@ mod tests {
             .collect();
 
         // Round 3 for each participant (signers only)
-        let r3_msgs: Vec<SigningProtocolMessage> = sk_refs
-            .iter()
-            .map(|sk| match WRAPS::signing_protocol(
+        let r3_msgs: Vec<SigningProtocolMessage> = (0..n)
+            .map(|i| match WRAPS::signing_protocol(
                 SigningProtocolPhase::R3,
-                message,
-                Some(sk),
+                seeds[i],
+                message_to_sign,
+                Some(sk_refs[i]),
                 pks,
                 &r1_msgs,
                 &r2_msgs,
@@ -769,7 +786,8 @@ mod tests {
         // Aggregate signatures
         match WRAPS::signing_protocol(
             SigningProtocolPhase::Aggregate,
-            message,
+            [0u8; ENTROPY_SIZE], // dummy entropy for aggregation
+            message_to_sign,
             None,
             pks,
             &r1_msgs,
