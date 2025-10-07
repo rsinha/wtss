@@ -87,8 +87,8 @@ where
             hash_input.extend_from_slice(&serialize(&prover_commitment));
             hash_input.extend_from_slice(message);
 
-            let verifier_challenge_digest= &Blake2s::digest(&hash_input)[0..31];
-            let verifier_challenge = C::ScalarField::from_le_bytes_mod_order(verifier_challenge_digest);
+            let verifier_challenge_digest: [u8; 32] = Blake2s::digest(&hash_input).into();
+            let verifier_challenge = C::ScalarField::from_le_bytes_mod_order(&verifier_challenge_digest[0..31]);
 
             (random_scalar, verifier_challenge)
         };
@@ -128,8 +128,8 @@ where
         hash_input.extend_from_slice(message);
 
         // cast the hash output to get e
-        let obtained_verifier_challenge_digest = &Blake2s::digest(&hash_input)[0..31];
-        let obtained_verifier_challenge = C::ScalarField::from_le_bytes_mod_order(obtained_verifier_challenge_digest);
+        let obtained_verifier_challenge_digest: [u8; 32] = Blake2s::digest(&hash_input).into();
+        let obtained_verifier_challenge = C::ScalarField::from_le_bytes_mod_order(&obtained_verifier_challenge_digest[0..31]);
         Ok(*verifier_challenge == obtained_verifier_challenge)
     }
 }
@@ -176,8 +176,8 @@ impl<C: CurveGroup + Hash> ThresholdSchnorr<C> where C::ScalarField: PrimeField,
         hash_input.extend_from_slice(&serialize(&aggregate_pk));
         hash_input.extend_from_slice(&serialize(&aggregate_prover_commitment));
         hash_input.extend_from_slice(message_to_sign);
-        let verifier_challenge = &Blake2s::digest(&hash_input)[0..31];
-        let verifier_challenge_fe = C::ScalarField::from_le_bytes_mod_order(verifier_challenge);
+        let verifier_challenge: [u8; 32] = Blake2s::digest(&hash_input).into();
+        let verifier_challenge_fe = C::ScalarField::from_le_bytes_mod_order(&verifier_challenge[0..31]);
 
         Ok(verifier_challenge_fe)
     }
