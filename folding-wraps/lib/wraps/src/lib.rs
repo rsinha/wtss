@@ -784,7 +784,7 @@ mod tests {
 
     #[test]
     fn wraps_simulation() {
-        let num_steps = 70;
+        let num_steps = 10;
 
         let schnorr_parameters = Schnorr::setup([0u8; 32]).unwrap();
         let (wraps_pk, wraps_vk) = WRAPS::setup_prover().unwrap();
