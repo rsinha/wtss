@@ -1,15 +1,13 @@
-use super::SignatureScheme;
-
 use ark_crypto_primitives::Error;
 use ark_ec::{CurveGroup, AffineRepr};
 use ark_ff::{fields::PrimeField, UniformRand};
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
-use ark_std::{Zero, rand::Rng, hash::Hash, marker::PhantomData, vec::Vec, ops::*};
+use ark_std::{Zero, rand::{Rng, SeedableRng}, hash::Hash, marker::PhantomData, vec::Vec, ops::*};
 use blake2::Blake2s;
 use digest::Digest;
-use ark_std::rand::SeedableRng;
 
 use crate::utils::serialize;
+use super::SignatureScheme;
 
 pub mod constraints;
 

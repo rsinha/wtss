@@ -1,7 +1,8 @@
-use super::RandomOracle;
 use ark_crypto_primitives::Error;
 use ark_std::rand::Rng;
 use digest::Digest;
+
+use super::RandomOracle;
 
 pub struct RO;
 pub mod constraints;

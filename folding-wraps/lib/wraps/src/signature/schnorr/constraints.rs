@@ -3,13 +3,12 @@ use ark_ff::Field;
 use ark_r1cs_std::{uint8::UInt8, prelude::*};
 use ark_relations::gr1cs::{ConstraintSystemRef, Namespace, SynthesisError};
 use ark_std::vec::Vec;
+use core::{borrow::Borrow, marker::PhantomData};
 
 use super::super::super::random_oracle::blake2s::constraints::{ParametersVar as B2SParamsVar, ROGadget};
 use crate::random_oracle::RandomOracleGadget;
 use crate::signature::SigVerifyGadget;
 use crate::signature::schnorr::{Parameters, PublicKey, Schnorr, Signature};
-
-use core::{borrow::Borrow, marker::PhantomData};
 
 type ConstraintF<C> = <<C as CurveGroup>::BaseField as Field>::BasePrimeField;
 

@@ -1,11 +1,11 @@
-use crate::random_oracle::{blake2s, RandomOracleGadget};
 use ark_crypto_primitives::prf::blake2s::constraints::{evaluate_blake2s, OutputVar};
 use ark_ff::{Field, PrimeField};
 use ark_r1cs_std::prelude::*;
 use ark_relations::gr1cs::{Namespace, SynthesisError};
 use ark_std::vec::Vec;
-
 use core::borrow::Borrow;
+
+use crate::random_oracle::{blake2s, RandomOracleGadget};
 
 #[derive(Clone)]
 pub struct ParametersVar;
