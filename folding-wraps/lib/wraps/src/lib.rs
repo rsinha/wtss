@@ -746,8 +746,7 @@ impl WRAPS {
         )?;
 
         let mut ivc_instance = if is_genesis {
-            let F_circuit = TSSFCircuit::<MAX_AB_SIZE>::new(())
-                .map_err(|_| WRAPSError::CryptographyError)?;
+            let F_circuit = Circuit::new(()).map_err(|_| WRAPSError::CryptographyError)?;
             let initial_state = vec![
                 hash_addressbook(&padded_prev_ab)?,
                 hash_hints_vk(tss_vk.as_ref())?
