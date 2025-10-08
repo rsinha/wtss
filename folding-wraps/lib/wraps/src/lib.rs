@@ -514,17 +514,21 @@ pub struct WRAPS {}
 
 impl WRAPS {
 
+    /// Derives a Schnorr keypair deterministically from the provided entropy.
     pub fn keygen(
         seed: [u8; ENTROPY_SIZE]
     ) -> Result<(SchnorrPrivKey, SchnorrPubKey), WRAPSError> {
+        // Initialize Schnorr parameters deterministically for reproducible keygen.
         // secret is a random scalar x, and the pubkey is y = xG
         let pp = Schnorr::setup([0u8; 32])
             .map_err(|_| WRAPSError::CryptographyError)?;
+        // Derive the keypair from the supplied seed.
         let (pk, sk) = Schnorr::keygen(&pp, seed)
             .map_err(|_| WRAPSError::CryptographyError)?;
         Ok((sk, pk))
     }
 
+    /// Executes a single phase of the threshold Schnorr signing protocol.
     pub fn signing_protocol(
         phase: SigningProtocolPhase, // either R1, R2, R3, or Aggregate
         protocol_instance_entropy: [u8; ENTROPY_SIZE], // reuse in all rounds of a protocol instance
@@ -535,10 +539,12 @@ impl WRAPS {
         round2_messages: &[SigningProtocolMessage], // should be [] if phase == R2
         round3_messages: &[SigningProtocolMessage], // should be [] if phase == R3
     ) -> Result<SigningProtocolObject, WRAPSError> {
+        // Use fixed parameters so every participant derives identical protocol randomness.
         let pp = Schnorr::setup([0u8; 32]).unwrap(); // dummy entropy for dummy parameters
 
         match phase {
             SigningProtocolPhase::R1 => {
+                // Round 1 only needs fresh commitments, no prior messages expected.
                 assert!(round1_messages.len() == 0);
                 assert!(round2_messages.len() == 0);
                 assert!(round3_messages.len() == 0);
@@ -562,10 +568,12 @@ impl WRAPS {
                     protocol_instance_entropy,
                     &r1_msgs
                 ).map_err(|_| WRAPSError::CryptographyError)?;
+                // Encode the second-round commitments to broadcast to the committee.
                 let r2_msg_encoded = utils::serialize(&r2_msg);
                 Ok(SigningProtocolObject::ProtocolMessage(r2_msg_encoded))
             },
             SigningProtocolPhase::R3 => {
+                // Round 3 produces each signer’s response; all prior messages must be present.
                 assert!(round1_messages.len() == public_keys.len());
                 assert!(round2_messages.len() == public_keys.len());
                 assert!(round3_messages.len() == 0);
@@ -586,10 +594,12 @@ impl WRAPS {
                     &r1_msgs,
                     &r2_msgs
                 ).map_err(|_| WRAPSError::CryptographyError)?;
+                // Return the serialized round-3 share to be gathered by the aggregator.
                 let r3_msg_encoded = utils::serialize(&r3_msg);
                 Ok(SigningProtocolObject::ProtocolMessage(r3_msg_encoded))
             },
             SigningProtocolPhase::Aggregate => {
+                // Aggregator verifies inputs and bundles all shares into a final signature.
                 assert!(round1_messages.len() == public_keys.len());
                 assert!(round2_messages.len() == public_keys.len());
                 assert!(round3_messages.len() == public_keys.len());
@@ -618,31 +628,36 @@ impl WRAPS {
         }
     }
 
+    /// Verifies an aggregated Schnorr signature against the supplied public keys.
     pub fn verify_signature(
         public_keys: &[SchnorrPubKey],
         message: impl AsRef<[u8]>,
         signature: &SchnorrSignature
     ) -> Result<bool, WRAPSError> {
         let pp = Schnorr::setup([0u8; 32]).unwrap(); // dummy entropy for dummy parameters
+        // Aggregate the provided public keys to obtain the threshold public key.
         let aggregate_pk = public_keys
             .iter()
             .fold(SchnorrPubKey::zero(), |acc, pk| (acc + pk).into_affine());
+        // Verify the combined signature against the aggregate key and message.
         Schnorr::verify(&pp, &aggregate_pk, message.as_ref(), signature)
             .map_err(|_| WRAPSError::CryptographyError)
     }
 
-    /// This is possibly only needed while computing the ledger ID
+    /// Computes the Poseidon hash of an address book.
     pub fn compute_addressbook_hash(
         ab: &AddressBook
     ) -> Result<AddressBookHash, WRAPSError> {
         if ab.len() > MAX_AB_SIZE {
             return Err(WRAPSError::AddressBookSizeExceeded);
         }
+        // Pad the address book to the circuit’s expected length before hashing.
         let padded_ab = pad_addressbook(ab);
 
         hash_addressbook(&padded_ab)
     }
 
+    /// Builds the message that signers attest to when rotating an address book.
     pub fn compute_rotation_message(
         ab_next: &AddressBook,
         tss_vk: impl AsRef<[u8]>
@@ -650,8 +665,10 @@ impl WRAPS {
         if ab_next.len() > MAX_AB_SIZE {
             return Err(WRAPSError::AddressBookSizeExceeded);
         }
+        // Normalize the next address book to the fixed circuit width.
         let padded_ab_next = pad_addressbook(ab_next);
 
+        // Concatenate the address book hash and hashed TSS verification key to form the message.
         let msg = [
             hash_addressbook(&padded_ab_next)?.into_bigint().to_bytes_le(),
             hash_hints_vk(tss_vk.as_ref())?.into_bigint().to_bytes_le()
@@ -659,28 +676,34 @@ impl WRAPS {
         Ok(msg)
     }
 
+    /// Reconstructs a proving key from serialized Nova and decider parameters.
     pub fn setup_prover(
         nova_pp: impl AsRef<[u8]>,
         decider_pp: impl AsRef<[u8]>,
     ) -> Result<ProvingKey, WRAPSError> {
+        // Deserialize both Nova and decider proving artifacts from disk-ready bytes.
         let pk = ProvingKey::deserialize(nova_pp, decider_pp)
             .map_err(|_| WRAPSError::CryptographyError)?;
         Ok(pk)
     }
 
+    /// Reconstructs a verification key from serialized Nova and decider parameters.
     pub fn setup_verifier(
         nova_vp: impl AsRef<[u8]>,
         decider_vp: impl AsRef<[u8]>,
     ) -> Result<VerificationKey, WRAPSError> {
+        // Deserialize the verification artifacts for Nova and the decider.
         let vk = VerificationKey::deserialize(nova_vp, decider_vp)
             .map_err(|_| WRAPSError::CryptographyError)?;
         Ok(vk)
     }
 
+    /// Serializes the compressed portion of a verification key into bytes.
     pub fn get_compressed_verification_key_bytes(
         vk: &VerificationKey
     ) -> Result<CompressedVerificationKeySerialized, WRAPSError> {
         let mut decider_vp_serialized = vec![];
+        // Store only the decider verifier parameters; Nova verifier data stays uncompressed elsewhere.
         vk.decider_vp.serialize_compressed(&mut decider_vp_serialized)
             .map_err(|_| WRAPSError::CryptographyError)?;
 
@@ -689,6 +712,7 @@ impl WRAPS {
 
     #[allow(clippy::too_many_arguments)]
     /// Creates the first proof for the genesis AddressBook.
+    /// Produces both the incremental Nova proof and the compressed decider proof.
     pub fn construct_wraps_proof(
         pk: &ProvingKey,                                     // proving key output by sp1 setup
         vk: &VerificationKey,                                // verifying key output by sp1 setup
@@ -711,6 +735,7 @@ impl WRAPS {
         }
 
         // pad up inputs to MAX_AB_SIZE
+        // Ensure both address books and the participation bitmap align with circuit expectations.
         let padded_prev_ab = pad_addressbook(prev_ab);
         let padded_next_ab = pad_addressbook(next_ab);
         let padded_bitvector: [bool; MAX_AB_SIZE] = {
@@ -727,6 +752,7 @@ impl WRAPS {
             assert_eq!(hash_addressbook(&padded_next_ab)?, hash_addressbook(&padded_prev_ab)?);
         }
 
+        // Build the message the committee signed to authorize the rotation.
         let ab_rotation_message: Vec<u8> = Self::compute_rotation_message(&padded_next_ab, tss_vk.as_ref())?;
 
         // compute aggregate public key
@@ -747,32 +773,39 @@ impl WRAPS {
 
         let mut ivc_instance = if is_genesis {
             let F_circuit = Circuit::new(()).map_err(|_| WRAPSError::CryptographyError)?;
+            // Seed the Nova instance with the initial ledger state.
             let initial_state = vec![
                 hash_addressbook(&padded_prev_ab)?,
                 hash_hints_vk(tss_vk.as_ref())?
             ];
             let mut instance = N::init(&(pk.nova_pp.clone(), vk.nova_vp.clone()), F_circuit, initial_state.clone())
                 .map_err(|_| WRAPSError::CryptographyError)?;
+            // Execute the first step using the prepared external inputs.
             instance.prove_step(thread_rng(), VecF(external_inputs_at_step.clone()), None)
                 .map_err(|_| WRAPSError::CryptographyError)?;
             instance
         } else {
+            // Resume the incremental IVC from the previous proof.
             let ivc_proof = NovaProof::deserialize_compressed(prev_proof.unwrap().as_slice()).unwrap();
             N::from_ivc_proof(ivc_proof, (), (pk.nova_pp.clone(), vk.nova_vp.clone()))
                 .map_err(|_| WRAPSError::CryptographyError)?
         };
 
+        // Fold in the current rotation step and immediately sanity-check the resulting IVC proof.
         ivc_instance.prove_step(thread_rng(), VecF(external_inputs_at_step.clone()), None)
             .map_err(|_| WRAPSError::CryptographyError)?;
         N::verify(vk.nova_vp.clone(), ivc_instance.ivc_proof())
             .map_err(|_| WRAPSError::CryptographyError)?;
 
         let mut next_ivc_proof_encoded = vec![];
+        // Persist the updated uncompressed IVC proof for future iterations.
         ivc_instance.ivc_proof().serialize_compressed(&mut next_ivc_proof_encoded).unwrap();
 
+        // Produce the succinct decider proof for the current state transition.
         let proof = D::prove(thread_rng(), pk.decider_pp.clone(), ivc_instance.clone())
             .map_err(|_| WRAPSError::CryptographyError)?;
 
+        // Double-check the decider proof before returning to catch internal inconsistencies.
         let verified = D::verify(
             vk.decider_vp.clone(),
             ivc_instance.i,
@@ -794,6 +827,7 @@ impl WRAPS {
             proof,
         };
         let mut compressed_proof_serialized = vec![];
+        // Archive the decider proof in compressed form for on-chain / off-chain verification.
         compressed_proof.serialize_compressed(&mut compressed_proof_serialized).unwrap();
 
         let decider_vp_serialized = Self::get_compressed_verification_key_bytes(vk)?;
@@ -806,6 +840,7 @@ impl WRAPS {
         Ok((next_ivc_proof_encoded, compressed_proof_serialized))
     }
 
+    /// Checks a compressed WRAPS proof against a compressed verification key.
     pub fn verify_compressed_wraps_proof(
         compressed_vk_serialized: &CompressedVerificationKeySerialized,
         proof_serialized: &CompressedProofSerialized,
@@ -813,6 +848,7 @@ impl WRAPS {
         type N = Nova<G1, G2, Circuit, KZG<'static, PairingCurve>, Pedersen<G2>, false>;
         type D = DeciderEth<G1, G2, Circuit, KZG<'static, PairingCurve>, Pedersen<G2>, Groth16<PairingCurve>, N>;
 
+        // Decode the decider verification parameters from serialized form.
         let decider_vp =
             VerifierParam::<
                 G1,
@@ -820,8 +856,10 @@ impl WRAPS {
                 <Groth16<PairingCurve> as ark_snark::SNARK<Fr>>::VerifyingKey,
             >::deserialize_compressed(compressed_vk_serialized.as_slice())?;
 
+        // Decode the proof bundle emitted during `construct_wraps_proof`.
         let compressed_proof = ProofData::deserialize_compressed(proof_serialized.as_slice())?;
 
+        // Delegate verification to the decider gadget and return its verdict.
         let verified = D::verify(
             decider_vp,
             compressed_proof.i,
