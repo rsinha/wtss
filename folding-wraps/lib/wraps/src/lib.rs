@@ -515,6 +515,13 @@ pub struct WRAPS {}
 impl WRAPS {
 
     /// Derives a Schnorr keypair deterministically from the provided entropy.
+    ///
+    /// # Arguments
+    /// * `seed` - 32-byte entropy used to sample the private key deterministically.
+    ///
+    /// # Returns
+    /// * `Ok((sk, pk))` containing the Schnorr secret and public keys.
+    /// * `Err(WRAPSError::CryptographyError)` if parameter generation or key derivation fails.
     pub fn keygen(
         seed: [u8; ENTROPY_SIZE]
     ) -> Result<(SchnorrPrivKey, SchnorrPubKey), WRAPSError> {
@@ -529,6 +536,19 @@ impl WRAPS {
     }
 
     /// Executes a single phase of the threshold Schnorr signing protocol.
+    ///
+    /// # Arguments
+    /// * `phase` - Which protocol phase to execute (R1, R2, R3, or Aggregate).
+    /// * `protocol_instance_entropy` - Participant-specific randomness reused across rounds.
+    /// * `message_to_sign` - Byte message that rounds R3/Aggregate must attest.
+    /// * `signing_key` - Optional private key required only during phase R3.
+    /// * `public_keys` - Participants' public keys; must be present for phases beyond R1.
+    /// * `round1_messages` / `round2_messages` / `round3_messages` - Messages collected from prior rounds.
+    ///
+    /// # Returns
+    /// * `Ok(SigningProtocolObject::ProtocolMessage(_))` for R1–R3 containing the serialized round output.
+    /// * `Ok(SigningProtocolObject::ProtocolOutput(_))` for Aggregate containing the final Schnorr signature.
+    /// * `Err(WRAPSError::CryptographyError)` if Schnorr operations fail.
     pub fn signing_protocol(
         phase: SigningProtocolPhase, // either R1, R2, R3, or Aggregate
         protocol_instance_entropy: [u8; ENTROPY_SIZE], // reuse in all rounds of a protocol instance
@@ -556,6 +576,7 @@ impl WRAPS {
                 Ok(SigningProtocolObject::ProtocolMessage(r1_msg_encoded))
             },
             SigningProtocolPhase::R2 => {
+                // Round 2 produces each signer's commitments; all R1 messages must be present.
                 assert!(round1_messages.len() == public_keys.len());
                 assert!(round2_messages.len() == 0);
                 assert!(round3_messages.len() == 0);
@@ -629,6 +650,16 @@ impl WRAPS {
     }
 
     /// Verifies an aggregated Schnorr signature against the supplied public keys.
+    ///
+    /// # Arguments
+    /// * `public_keys` - Subset of participant public keys who collectively signed the message.
+    /// * `message` - Message bytes that were signed.
+    /// * `signature` - Aggregated Schnorr signature to validate.
+    ///
+    /// # Returns
+    /// * `Ok(true)` when the signature verifies successfully.
+    /// * `Ok(false)` when the signature is invalid.
+    /// * `Err(WRAPSError::CryptographyError)` when verification cannot be performed.
     pub fn verify_signature(
         public_keys: &[SchnorrPubKey],
         message: impl AsRef<[u8]>,
@@ -645,6 +676,15 @@ impl WRAPS {
     }
 
     /// Computes the Poseidon hash of an address book.
+    /// This is expected to only be used to compute the ledger ID.
+    ///
+    /// # Arguments
+    /// * `ab` - Address book entries whose hash is needed; length must not exceed `MAX_AB_SIZE`.
+    ///
+    /// # Returns
+    /// * `Ok(AddressBookHash)` containing the Poseidon digest of the padded address book.
+    /// * `Err(WRAPSError::AddressBookSizeExceeded)` if the address book is too large.
+    /// * `Err(WRAPSError::CryptographyError)` if hashing fails.
     pub fn compute_addressbook_hash(
         ab: &AddressBook
     ) -> Result<AddressBookHash, WRAPSError> {
@@ -658,6 +698,15 @@ impl WRAPS {
     }
 
     /// Builds the message that signers attest to when rotating an address book.
+    ///
+    /// # Arguments
+    /// * `ab_next` - Next address book state being proposed.
+    /// * `tss_vk` - Serialized threshold-verification key that corresponds to `ab_next`.
+    ///
+    /// # Returns
+    /// * `Ok(Vec<u8>)` containing the concatenation of the address book hash and the hashed verification key.
+    /// * `Err(WRAPSError::AddressBookSizeExceeded)` if `ab_next` exceeds `MAX_AB_SIZE`.
+    /// * `Err(WRAPSError::CryptographyError)` if hashing fails.
     pub fn compute_rotation_message(
         ab_next: &AddressBook,
         tss_vk: impl AsRef<[u8]>
@@ -677,6 +726,14 @@ impl WRAPS {
     }
 
     /// Reconstructs a proving key from serialized Nova and decider parameters.
+    ///
+    /// # Arguments
+    /// * `nova_pp` - Byte slice containing Nova prover parameters.
+    /// * `decider_pp` - Byte slice containing decider prover parameters.
+    ///
+    /// # Returns
+    /// * `Ok(ProvingKey)` ready for WRAPS proof construction.
+    /// * `Err(WRAPSError::CryptographyError)` if deserialization fails.
     pub fn setup_prover(
         nova_pp: impl AsRef<[u8]>,
         decider_pp: impl AsRef<[u8]>,
@@ -688,6 +745,14 @@ impl WRAPS {
     }
 
     /// Reconstructs a verification key from serialized Nova and decider parameters.
+    ///
+    /// # Arguments
+    /// * `nova_vp` - Byte slice with Nova verifier parameters.
+    /// * `decider_vp` - Byte slice with decider verifier parameters.
+    ///
+    /// # Returns
+    /// * `Ok(VerificationKey)` suitable for WRAPS proof verification.
+    /// * `Err(WRAPSError::CryptographyError)` if deserialization fails.
     pub fn setup_verifier(
         nova_vp: impl AsRef<[u8]>,
         decider_vp: impl AsRef<[u8]>,
@@ -698,7 +763,14 @@ impl WRAPS {
         Ok(vk)
     }
 
-    /// Serializes the compressed portion of a verification key into bytes.
+    /// Serializes the decider portion of a verification key into compressed bytes.
+    ///
+    /// # Arguments
+    /// * `vk` - Verification key whose decider verifier parameters will be compressed.
+    ///
+    /// # Returns
+    /// * `Ok(Vec<u8>)` holding the compressed decider verifier parameters.
+    /// * `Err(WRAPSError::CryptographyError)` if serialization fails.
     pub fn get_compressed_verification_key_bytes(
         vk: &VerificationKey
     ) -> Result<CompressedVerificationKeySerialized, WRAPSError> {
@@ -713,6 +785,23 @@ impl WRAPS {
     #[allow(clippy::too_many_arguments)]
     /// Creates the first proof for the genesis AddressBook.
     /// Produces both the incremental Nova proof and the compressed decider proof.
+    ///
+    /// # Arguments
+    /// * `pk` - Proving key returned by [`setup_prover`].
+    /// * `vk` - Verification key returned by [`setup_verifier`].
+    /// * `ab_genesis_hash` - Expected hash of the genesis address book for consistency checks.
+    /// * `prev_ab` - Current address book snapshot.
+    /// * `next_ab` - Next address book snapshot authorized by the committee.
+    /// * `prev_proof` - Optional uncompressed Nova proof from the previous iteration.
+    /// * `tss_vk` - Serialized threshold verification key corresponding to `next_ab`.
+    /// * `aggregate_signature` - Aggregated Schnorr signature validating the rotation message.
+    /// * `bitvector` - Participation bitmap indicating which parties signed.
+    ///
+    /// # Returns
+    /// * `Ok((uncompressed_ivc, compressed_decider))` where the first element is the updated Nova proof and the second is the compressed decider proof.
+    /// * `Err(WRAPSError::InvalidInput)` if input lengths are inconsistent.
+    /// * `Err(WRAPSError::AddressBookSizeExceeded)` if any address book exceeds `MAX_AB_SIZE`.
+    /// * `Err(WRAPSError::CryptographyError)` if any cryptographic primitive fails.
     pub fn construct_wraps_proof(
         pk: &ProvingKey,                                     // proving key output by sp1 setup
         vk: &VerificationKey,                                // verifying key output by sp1 setup
@@ -841,6 +930,15 @@ impl WRAPS {
     }
 
     /// Checks a compressed WRAPS proof against a compressed verification key.
+    ///
+    /// # Arguments
+    /// * `compressed_vk_serialized` - Compressed decider verifier parameters produced by [`get_compressed_verification_key_bytes`].
+    /// * `proof_serialized` - Compressed proof bundle returned by [`construct_wraps_proof`].
+    ///
+    /// # Returns
+    /// * `Ok(true)` if the decider successfully verifies the proof.
+    /// * `Ok(false)` if verification fails.
+    /// * `Err(folding_schemes::Error)` if deserialization or verification encounters an error.
     pub fn verify_compressed_wraps_proof(
         compressed_vk_serialized: &CompressedVerificationKeySerialized,
         proof_serialized: &CompressedProofSerialized,
