@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: Apache-2.0
+// Portions of this file are derived from arkworks-rs/r1cs-tutorial under Apache 2.0 License.
+
 use ark_crypto_primitives::Error;
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 use ark_std::hash::Hash;
@@ -12,7 +15,7 @@ pub trait SignatureScheme {
     type Parameters: Clone + Send + Sync;
     type PublicKey: CanonicalSerialize + CanonicalDeserialize + Hash + Eq + Clone + Default + Send + Sync;
     type SecretKey: CanonicalSerialize + CanonicalDeserialize + Clone + Default;
-    type Signature: Clone + Default + Send + Sync;
+    type Signature: CanonicalSerialize + CanonicalDeserialize + Clone + Default + Send + Sync;
 
     fn setup(
         entropy: [u8; 32]

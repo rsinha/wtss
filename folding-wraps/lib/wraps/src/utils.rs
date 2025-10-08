@@ -1,6 +1,6 @@
-use ark_serialize::{CanonicalSerialize};
+// SPDX-License-Identifier: Apache-2.0
 
-pub fn serialize<T: CanonicalSerialize>(
+pub fn serialize<T: ark_serialize::CanonicalSerialize>(
     t: &T
 ) -> Vec<u8> {
     let mut buf = Vec::new();

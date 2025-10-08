@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: Apache-2.0
+// Portions of this file are derived from arkworks-rs/r1cs-tutorial under Apache 2.0 License.
+
 use ark_ec::CurveGroup;
 use ark_ff::Field;
 use ark_r1cs_std::{uint8::UInt8, prelude::*};
@@ -216,8 +219,7 @@ where
         other: &Self,
         condition: &Boolean<ConstraintF<C>>,
     ) -> Result<(), SynthesisError> {
-        self.pub_key
-            .conditional_enforce_equal(&other.pub_key, condition)
+        self.pub_key.conditional_enforce_equal(&other.pub_key, condition)
     }
 
     #[inline]
@@ -226,8 +228,7 @@ where
         other: &Self,
         condition: &Boolean<ConstraintF<C>>,
     ) -> Result<(), SynthesisError> {
-        self.pub_key
-            .conditional_enforce_not_equal(&other.pub_key, condition)
+        self.pub_key.conditional_enforce_not_equal(&other.pub_key, condition)
     }
 }
 

@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: Apache-2.0
+
 #![allow(non_snake_case)]
 #![allow(non_upper_case_globals)]
 #![allow(non_camel_case_types)]
@@ -33,8 +35,7 @@ use ark_crypto_primitives::crh::{
 use ark_groth16::{Groth16};
 use ark_relations::gr1cs::{Namespace, ConstraintSystemRef, SynthesisError};
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
-use ark_std::fmt::Debug;
-use ark_std::{rand::Rng, test_rng, rand::thread_rng};
+use ark_std::{rand::Rng, test_rng, rand::thread_rng, fmt::Debug};
 
 use core::borrow::Borrow;
 use core::{marker::PhantomData};
@@ -57,7 +58,7 @@ use folding_schemes::folding::traits::CommittedInstanceOps;
 
 /********************************* Parameters *********************************/
 
-pub const MAX_AB_SIZE: usize = 16; // we need to pad up to this size
+pub const MAX_AB_SIZE: usize = 128; // we need to pad up to this size
 pub const MAX_EXT_INPUTS: usize = 4 * MAX_AB_SIZE + 4;
 pub const ENTROPY_SIZE: usize = 32; // size of the seed for key generation
 
@@ -78,6 +79,10 @@ type SchnorrSignature = <Schnorr as SignatureScheme>::Signature;
 type SchnorrPrivKey = JubJubFr;
 type SchnorrPubKey = <JubJub as CurveGroup>::Affine;
 type SchnorrParams = signature::schnorr::Parameters<JubJub>;
+
+type SchnorrPubKeyVar = signature::schnorr::constraints::PublicKeyVar<JubJub, JubJubVar>;
+type SchnorrSignatureVar = signature::schnorr::constraints::SignatureVar<JubJub, JubJubVar>;
+type SchnorrVerifyGadget = signature::schnorr::constraints::SchnorrSignatureVerifyGadget<JubJub, JubJubVar>;
 
 type ThresholdSchnorr = signature::schnorr::ThresholdSchnorr<JubJub>;
 type ThresholdSchnorrR1Msg = signature::schnorr::ThresholdSchnorrMessage1;
@@ -102,10 +107,6 @@ type D = DeciderEth<G1, G2, TSSFCircuit<MAX_AB_SIZE>, KZG<'static, PairingCurve>
 type DPP = (GrothProverKey, <KZG<'static, PairingCurve> as CommitmentScheme<G1>>::ProverParams);
 type DVP = VerifierParam<G1, <KZG<'static, PairingCurve> as CommitmentScheme<G1>>::VerifierParams, GrothVerifierKey>;
 
-type SchnorrPubKeyVar = signature::schnorr::constraints::PublicKeyVar<JubJub, JubJubVar>;
-type SchnorrSignatureVar = signature::schnorr::constraints::SignatureVar<JubJub, JubJubVar>;
-type SchnorrVerifyGadget = signature::schnorr::constraints::SchnorrSignatureVerifyGadget<JubJub, JubJubVar>;
-
 /********************************* Useful Definitions *********************************/
 
 #[derive(Clone, Debug)]
@@ -115,6 +116,7 @@ impl<F: PrimeField, const L: usize> Default for VecF<F, L> {
         VecF(vec![F::zero(); L])
     }
 }
+
 #[derive(Clone, Debug)]
 pub struct VecFpVar<F: PrimeField, const L: usize>(pub Vec<FpVar<F>>);
 impl<F: PrimeField, const L: usize> AllocVar<VecF<F, L>, F> for VecFpVar<F, L> {
@@ -132,6 +134,7 @@ impl<F: PrimeField, const L: usize> AllocVar<VecF<F, L>, F> for VecFpVar<F, L> {
         })
     }
 }
+
 impl<F: PrimeField, const L: usize> Default for VecFpVar<F, L> {
     fn default() -> Self {
         VecFpVar(vec![FpVar::<F>::Constant(F::zero()); L])
@@ -142,20 +145,21 @@ impl<F: PrimeField, const L: usize> Default for VecFpVar<F, L> {
 /********************************* Circuit *********************************/
 
 #[derive(Clone, Copy, Debug)]
-pub struct TSSFCircuit<const K: usize> {
-    _f: PhantomData<Fr>,
-}
+pub struct TSSFCircuit<const K: usize>;
+
 impl<const K: usize> FCircuit<Fr> for TSSFCircuit<K> {
     type Params = ();
     type ExternalInputs = VecF<Fr, MAX_EXT_INPUTS>;
     type ExternalInputsVar = VecFpVar<Fr, MAX_EXT_INPUTS>;
 
     fn new(_params: Self::Params) -> Result<Self, Error> {
-        Ok(Self { _f: PhantomData })
+        Ok(Self { })
     }
+
     fn state_len(&self) -> usize {
         2
     }
+
     /// generates the constraints for the step of F for the given z_i
     fn generate_step_constraints(
         &self,
@@ -207,8 +211,8 @@ impl<const K: usize> FCircuit<Fr> for TSSFCircuit<K> {
             aggregate_weight.add_assign(is_present.select(&prev_weights[i], &zero)?);
             total_weight.add_assign(&prev_weights[i]);
         }
-        let three_times_aggregate_weight = &aggregate_weight + &aggregate_weight + &aggregate_weight;
-        total_weight.enforce_cmp(&three_times_aggregate_weight, std::cmp::Ordering::Less, false)?;
+        let two_times_aggregate_weight = &aggregate_weight + &aggregate_weight;
+        total_weight.enforce_cmp(&two_times_aggregate_weight, std::cmp::Ordering::Less, false)?;
 
         // compute aggregate public key
         let mut aggregate_pubkey = JubJubVar::new_witness(cs.clone(), || Ok(ark_ed_on_bn254::EdwardsAffine::zero()))?;
@@ -232,7 +236,7 @@ impl<const K: usize> FCircuit<Fr> for TSSFCircuit<K> {
             let x_coords: Vec<FpVar<Fr>> = (0..K)
                 .map(|i| external_inputs.0[3*i].clone())
                 .collect();
-            let _y_coords: Vec<FpVar<Fr>> = (0..K)
+            let y_coords: Vec<FpVar<Fr>> = (0..K)
                 .map(|i| external_inputs.0[3*i + 1].clone())
                 .collect();
             let weights: Vec<FpVar<Fr>> = (0..K)
@@ -240,7 +244,7 @@ impl<const K: usize> FCircuit<Fr> for TSSFCircuit<K> {
                 .collect();
             let poseidon_input: Vec<FpVar<Fr>> = x_coords
                 .into_iter()
-                //.chain(y_coords.into_iter())
+                .chain(y_coords.into_iter())
                 .chain(weights.into_iter())
                 .collect();
             let poseidon_output = PoseidonCRHGadget::evaluate(&poseidon_config_var, &poseidon_input)?;
@@ -293,7 +297,7 @@ fn hash_addressbook(ab: &AddressBook) -> Fr {
         .iter()
         .map(|abe| abe.0.x)
         .collect();
-    let _ycoords: Vec<Fr> = ab
+    let ycoords: Vec<Fr> = ab
         .iter()
         .map(|abe| abe.0.y)
         .collect();
@@ -302,7 +306,7 @@ fn hash_addressbook(ab: &AddressBook) -> Fr {
         .map(|abe| abe.1)
         .collect();
     let poseidon_input: Vec<Fr> = xcoords.into_iter()
-        //.chain(ycoords.into_iter())
+        .chain(ycoords.into_iter())
         .chain(weights.into_iter())
         .collect();
     let out_bytes = PoseidonCRH::evaluate(&poseidon_canonical_config::<Fr>(), poseidon_input).unwrap();
@@ -342,14 +346,53 @@ fn prepare_external_inputs(
     external_inputs_at_step
 }
 
+pub type UncompressedProvingKeySerialized = Vec<u8>;
+pub type CompressedProvingKeySerialized = Vec<u8>;
+pub type UncompressedVerificationKeySerialized = Vec<u8>;
+pub type CompressedVerificationKeySerialized = Vec<u8>;
+
 pub struct WRAPSProvingKey {
     pub nova_pp: NPP,
     pub decider_pp: DPP,
 }
 
+impl WRAPSProvingKey {
+    pub fn deserialize(nova_pp: impl AsRef<[u8]>, decider_pp: impl AsRef<[u8]>) -> Result<Self, Error> {
+        let nova_pp: NPP = N::pp_deserialize_with_mode(nova_pp.as_ref(), ark_serialize::Compress::Yes, ark_serialize::Validate::Yes, ())?;
+        let decider_pp = DPP::deserialize_compressed(decider_pp.as_ref())?;
+        Ok(Self { nova_pp, decider_pp })
+    }
+
+    pub fn serialize(&self) -> Result<(UncompressedProvingKeySerialized, CompressedProvingKeySerialized), Error> {
+        let mut nova_pp_serialized: UncompressedProvingKeySerialized = vec![];
+        self.nova_pp.serialize_compressed(&mut nova_pp_serialized)?;
+
+        let mut decider_pp_serialized: CompressedProvingKeySerialized = vec![];
+        self.decider_pp.serialize_compressed(&mut decider_pp_serialized)?;
+        Ok((nova_pp_serialized, decider_pp_serialized))
+    }
+}
+
 pub struct WRAPSVerificationKey {
     pub nova_vp: NVP,
     pub decider_vp: DVP,
+}
+
+impl WRAPSVerificationKey {
+    pub fn deserialize(nova_vp: impl AsRef<[u8]>, decider_vp: impl AsRef<[u8]>) -> Result<Self, Error> {
+        let nova_vp: NVP = N::vp_deserialize_with_mode(nova_vp.as_ref(), ark_serialize::Compress::Yes, ark_serialize::Validate::Yes, ())?;
+        let decider_vp = DVP::deserialize_compressed(decider_vp.as_ref())?;
+        Ok(Self { nova_vp, decider_vp })
+    }
+
+    pub fn serialize(&self) -> Result<(UncompressedVerificationKeySerialized, CompressedVerificationKeySerialized), Error> {
+        let mut nova_vp_serialized: UncompressedVerificationKeySerialized = vec![];
+        self.nova_vp.serialize_compressed(&mut nova_vp_serialized)?;
+
+        let mut decider_vp_serialized: CompressedVerificationKeySerialized = vec![];
+        self.decider_vp.serialize_compressed(&mut decider_vp_serialized)?;
+        Ok((nova_vp_serialized, decider_vp_serialized))
+    }
 }
 
 /// Phases of the signing protocol: 3 rounds followed by aggregation
@@ -367,8 +410,8 @@ pub enum SigningProtocolObject {
 }
 
 pub type SigningProtocolMessage = Vec<u8>;
-pub type CompressedProof = Vec<u8>;
-pub type UncompressedProof = Vec<u8>;
+pub type CompressedProofSerialized = Vec<u8>;
+pub type UncompressedProofSerialized = Vec<u8>;
 
 /// Error enum to wrap underlying failures in RAPS operations, 
 /// or wrap errors coming from dependencies (namely, arkworks).
@@ -401,6 +444,34 @@ pub struct ProofData {
     pub proof: EthProof<G1, KZG<'static, PairingCurve>, Groth16<PairingCurve>>,
 }
 
+pub struct WRAPSTrustedSetup {}
+
+impl WRAPSTrustedSetup {
+    pub fn setup() -> Result<(WRAPSProvingKey, WRAPSVerificationKey), WRAPSError> {
+        let mut rng = ark_std::rand::rngs::OsRng;
+        let F_circuit = TSSFCircuit::<MAX_AB_SIZE>::new(())
+            .map_err(|_| WRAPSError::CryptographyError)?;
+
+        let poseidon_config = poseidon_canonical_config::<Fr>();
+
+        let nova_preprocess_params = PreprocessorParam::new(poseidon_config, F_circuit);
+        let (nova_pp, nova_vp) = N::preprocess(
+            &mut rng,
+            &nova_preprocess_params
+        ).map_err(|_| WRAPSError::CryptographyError)?;
+
+        let (decider_pp, decider_vp) = D::preprocess(
+            &mut rng,
+            ((nova_pp.clone(), nova_vp.clone()), F_circuit.state_len())
+        ).map_err(|_| WRAPSError::CryptographyError)?;
+
+        Ok((
+            WRAPSProvingKey { nova_pp, decider_pp },
+            WRAPSVerificationKey { nova_vp, decider_vp }
+        ))
+    }
+}
+
 pub struct WRAPS {}
 
 impl WRAPS {
@@ -415,7 +486,7 @@ impl WRAPS {
     pub fn signing_protocol(
         phase: SigningProtocolPhase, // either R1, R2, R3, or Aggregate
         protocol_instance_entropy: [u8; ENTROPY_SIZE], // reuse in all rounds of a protocol instance
-        message_to_sign: &[u8], // message to sign should be output of rotation_message(..)
+        message_to_sign: impl AsRef<[u8]>, // message to sign should be output of rotation_message(..)
         signing_key: Option<&SchnorrPrivKey>, // should be None if phase == Aggregate
         public_keys: &[SchnorrPubKey], // can be [] if phase == R1, but must be non-empty otherwise
         round1_messages: &[SigningProtocolMessage], // should be [] if phase == R1
@@ -467,8 +538,8 @@ impl WRAPS {
                 let r3_msg = ThresholdSchnorr::sign_round3(
                     &pp,
                     protocol_instance_entropy,
-                    message_to_sign,
-                    signing_key.unwrap(), 
+                    message_to_sign.as_ref(),
+                    signing_key.unwrap(),
                     public_keys,
                     &r1_msgs,
                     &r2_msgs
@@ -494,7 +565,7 @@ impl WRAPS {
                     .collect();
                 let signature = ThresholdSchnorr::aggregate(
                     &pp,
-                    message_to_sign,
+                    message_to_sign.as_ref(),
                     public_keys,
                     &r1_msgs,
                     &r2_msgs,
@@ -507,14 +578,14 @@ impl WRAPS {
 
     pub fn verify_signature(
         public_keys: &[SchnorrPubKey],
-        message: &[u8],
+        message: impl AsRef<[u8]>,
         signature: &SchnorrSignature
     ) -> bool {
         let pp = Schnorr::setup([0u8; 32]).unwrap(); // dummy entropy for dummy parameters
         let aggregate_pk = public_keys
             .iter()
             .fold(SchnorrPubKey::zero(), |acc, pk| (acc + pk).into_affine());
-        Schnorr::verify(&pp, &aggregate_pk, message, signature).unwrap()
+        Schnorr::verify(&pp, &aggregate_pk, message.as_ref(), signature).unwrap()
     }
 
     pub fn rotation_message(ab_next: &AddressBook, tss_vk: impl AsRef<[u8]>) -> Vec<u8> {
@@ -524,31 +595,27 @@ impl WRAPS {
         ].concat()
     }
 
-    pub fn setup_prover() -> Result<(WRAPSProvingKey, WRAPSVerificationKey), WRAPSError> {
-        let mut rng = ark_std::rand::rngs::OsRng;
-        let F_circuit = TSSFCircuit::<MAX_AB_SIZE>::new(())
+    pub fn setup_prover(
+        nova_pp: impl AsRef<[u8]>,
+        decider_pp: impl AsRef<[u8]>,
+    ) -> Result<WRAPSProvingKey, WRAPSError> {
+        let pk = WRAPSProvingKey::deserialize(nova_pp, decider_pp)
             .map_err(|_| WRAPSError::CryptographyError)?;
-
-        let poseidon_config = poseidon_canonical_config::<Fr>();
-
-        let nova_preprocess_params = PreprocessorParam::new(poseidon_config, F_circuit);
-        let (nova_pp, nova_vp) = N::preprocess(
-            &mut rng,
-            &nova_preprocess_params
-        ).map_err(|_| WRAPSError::CryptographyError)?;
-
-        let (decider_pp, decider_vp) = D::preprocess(
-            &mut rng,
-            ((nova_pp.clone(), nova_vp.clone()), F_circuit.state_len())
-        ).map_err(|_| WRAPSError::CryptographyError)?;
-
-        Ok((
-            WRAPSProvingKey { nova_pp, decider_pp },
-            WRAPSVerificationKey { nova_vp, decider_vp }
-        ))
+        Ok(pk)
     }
 
-    pub fn get_wraps_verification_key_bytes(vk: &WRAPSVerificationKey) -> Result<Vec<u8>, WRAPSError> {
+    pub fn setup_verifier(
+        nova_vp: impl AsRef<[u8]>,
+        decider_vp: impl AsRef<[u8]>,
+    ) -> Result<WRAPSVerificationKey, WRAPSError> {
+        let vk = WRAPSVerificationKey::deserialize(nova_vp, decider_vp)
+            .map_err(|_| WRAPSError::CryptographyError)?;
+        Ok(vk)
+    }
+
+    pub fn get_compressed_verification_key_bytes(
+        vk: &WRAPSVerificationKey
+    ) -> Result<CompressedVerificationKeySerialized, WRAPSError> {
         let mut decider_vp_serialized = vec![];
         vk.decider_vp.serialize_compressed(&mut decider_vp_serialized)
             .map_err(|_| WRAPSError::CryptographyError)?;
@@ -564,12 +631,12 @@ impl WRAPS {
         ab_genesis_hash: &AddressBookHash,            // genesis AddressBook hash
         prev_ab: &AddressBook,                        // current AddressBook
         next_ab: &AddressBook,                        // next AddressBook
-        prev_proof: Option<UncompressedProof>,        // the previous proof
+        prev_proof: Option<UncompressedProofSerialized>,        // the previous proof
         tss_vk: impl AsRef<[u8]>,                     // TSS verification key for the next AddressBook
         aggregate_signature: &SchnorrSignature,       // threshold Schnorr signature attesting the next AddressBook
         bitvector: &[bool; MAX_AB_SIZE],              // bitvector indicating which members signed the signature
-    ) -> Result<(UncompressedProof, CompressedProof), WRAPSError> {
-        let is_genesis = prev_proof.is_none();
+    ) -> Result<(UncompressedProofSerialized, CompressedProofSerialized), WRAPSError> {
+        let is_genesis: bool = prev_proof.is_none();
         if is_genesis {
             // ensure genesis ab hash matches
             assert_eq!(*ab_genesis_hash, hash_addressbook(prev_ab));
@@ -647,7 +714,7 @@ impl WRAPS {
         let mut compressed_proof_serialized = vec![];
         compressed_proof.serialize_compressed(&mut compressed_proof_serialized).unwrap();
 
-        let decider_vp_serialized = Self::get_wraps_verification_key_bytes(vk).unwrap();
+        let decider_vp_serialized = Self::get_compressed_verification_key_bytes(vk)?;
 
         assert!(Self::verify_compressed_wraps_proof(
             &decider_vp_serialized,
@@ -658,8 +725,8 @@ impl WRAPS {
     }
 
     pub fn verify_compressed_wraps_proof(
-        decider_vp_serialized: &[u8],
-        proof_serialized: &[u8],
+        compressed_vk_serialized: &CompressedVerificationKeySerialized,
+        proof_serialized: &CompressedProofSerialized,
     ) -> Result<bool, Error> {
         type N = Nova<G1, G2, TSSFCircuit<MAX_AB_SIZE>, KZG<'static, PairingCurve>, Pedersen<G2>, false>;
         type D = DeciderEth<G1, G2, TSSFCircuit<MAX_AB_SIZE>, KZG<'static, PairingCurve>, Pedersen<G2>, Groth16<PairingCurve>, N>;
@@ -669,9 +736,9 @@ impl WRAPS {
                 G1,
                 <KZG<'static, PairingCurve> as CommitmentScheme<G1>>::VerifierParams,
                 <Groth16<PairingCurve> as ark_snark::SNARK<Fr>>::VerifyingKey,
-            >::deserialize_compressed(decider_vp_serialized)?;
+            >::deserialize_compressed(compressed_vk_serialized.as_slice())?;
 
-        let compressed_proof = ProofData::deserialize_compressed(proof_serialized)?;
+        let compressed_proof = ProofData::deserialize_compressed(proof_serialized.as_slice())?;
 
         let verified = D::verify(
             decider_vp,
@@ -690,6 +757,7 @@ impl WRAPS {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::{env, path::PathBuf};
 
     fn create_new_addressbook() -> (AddressBook, Keys) {
         let rng = &mut thread_rng();
@@ -706,7 +774,7 @@ mod tests {
     }
 
     fn even_bitvector() -> [bool; MAX_AB_SIZE] {
-        std::array::from_fn(|i| i % 2 == 0)
+        std::array::from_fn(|i| i % 2 == 0 || i % 3 == 0)
     }
 
     fn signing_subset<'a>(
@@ -800,12 +868,35 @@ mod tests {
     }
 
     #[test]
+    fn wraps_trusted_setup() {
+        let (pk, vk) = WRAPSTrustedSetup::setup().unwrap();
+        let (nova_pp_serialized, decider_pp_serialized) = pk.serialize().unwrap();
+        let (nova_vp_serialized, decider_vp_serialized) = vk.serialize().unwrap();
+
+        let cwd = env::current_dir().unwrap();
+        std::fs::write(cwd.join("resources/nova_pp.bin"), &nova_pp_serialized).unwrap();
+        std::fs::write(cwd.join("resources/nova_vp.bin"), &nova_vp_serialized).unwrap();
+        std::fs::write(cwd.join("resources/decider_pp.bin"), &decider_pp_serialized).unwrap();
+        std::fs::write(cwd.join("resources/decider_vp.bin"), &decider_vp_serialized).unwrap();
+    }
+
+    #[test]
     fn wraps_simulation() {
         let num_steps = 10;
 
-        let schnorr_parameters = Schnorr::setup([0u8; 32]).unwrap();
-        let (wraps_pk, wraps_vk) = WRAPS::setup_prover().unwrap();
+        let start = std::time::Instant::now();
+        let cwd = env::current_dir().unwrap();
+        let wraps_pk = WRAPS::setup_prover(
+            std::fs::read(cwd.join("resources/nova_pp.bin")).unwrap(),
+            std::fs::read(cwd.join("resources/decider_pp.bin")).unwrap()
+        ).unwrap();
+        let wraps_vk = WRAPS::setup_verifier(
+            std::fs::read(cwd.join("resources/nova_vp.bin")).unwrap(),
+            std::fs::read(cwd.join("resources/decider_vp.bin")).unwrap()
+        ).unwrap();
+        println!("Parsed all parameters: {:?}", start.elapsed());
 
+        let schnorr_parameters = Schnorr::setup([0u8; 32]).unwrap();
         // Build genesis address book and keys
         let (genesis_ab, genesis_keys) = create_new_addressbook();
         let ab_genesis_hash = super::hash_addressbook(&genesis_ab);
@@ -857,9 +948,9 @@ mod tests {
             ).expect("WRAPS proof should be created");
             println!("Step {} WRAPS proof creation time: {:?}", i, start.elapsed());
 
-            let decider_vp_serialized = WRAPS::get_wraps_verification_key_bytes(&wraps_vk).unwrap();
+            let compressed_vk_bytes = WRAPS::get_compressed_verification_key_bytes(&wraps_vk).unwrap();
 
-            let verified = WRAPS::verify_compressed_wraps_proof(&decider_vp_serialized, &next_compressed).unwrap();
+            let verified = WRAPS::verify_compressed_wraps_proof(&compressed_vk_bytes, &next_compressed).unwrap();
             assert!(verified);
 
             prev_ab = next_ab;
