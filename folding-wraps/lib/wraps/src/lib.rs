@@ -11,6 +11,7 @@ mod signature;
 mod random_oracle;
 mod utils;
 
+use digest::typenum::bit;
 use signature::{*};
 
 /********************************* Imports *********************************/
@@ -99,11 +100,12 @@ type AddressBookEntry = (schnorr::PublicKey<JubJub>, Weight);
 type AddressBook = Vec<AddressBookEntry>;
 type Keys = Vec<schnorr::SecretKey<JubJub>>;
 
-type N = Nova<G1, G2, TSSFCircuit<MAX_AB_SIZE>, KZG<'static, PairingCurve>, Pedersen<G2>, false>;
-type NovaProof = <N as FoldingScheme<G1, G2, TSSFCircuit<MAX_AB_SIZE>>>::IVCProof;
+type Circuit = TSSFCircuit<MAX_AB_SIZE>;
+type N = Nova<G1, G2, Circuit, KZG<'static, PairingCurve>, Pedersen<G2>, false>;
+type NovaProof = <N as FoldingScheme<G1, G2, Circuit>>::IVCProof;
 type NPP = ProverParams<G1, G2, KZG<'static, PairingCurve>, Pedersen<G2>, false>;
 type NVP = VerifierParams<G1, G2, KZG<'static, PairingCurve>, Pedersen<G2>, false>;
-type D = DeciderEth<G1, G2, TSSFCircuit<MAX_AB_SIZE>, KZG<'static, PairingCurve>, Pedersen<G2>, Groth16<PairingCurve>, N>;
+type D = DeciderEth<G1, G2, Circuit, KZG<'static, PairingCurve>, Pedersen<G2>, Groth16<PairingCurve>, N>;
 type DPP = (GrothProverKey, <KZG<'static, PairingCurve> as CommitmentScheme<G1>>::ProverParams);
 type DVP = VerifierParam<G1, <KZG<'static, PairingCurve> as CommitmentScheme<G1>>::VerifierParams, GrothVerifierKey>;
 
@@ -115,6 +117,8 @@ pub enum WRAPSError {
     InvalidInput(String),
     /// Multi-purpose error type for describing prover failure
     CryptographyError,
+    /// Error indicating address book size exceeded maximum allowed
+    AddressBookSizeExceeded,
 }
 
 /// Phases of the signing protocol: 3 rounds followed by aggregation
@@ -340,17 +344,29 @@ impl<const K: usize> FCircuit<Fr> for TSSFCircuit<K> {
     }
 }
 
-fn hash_hints_vk(vk_bytes: &[u8]) -> Fr {
-    let hash_bytes = Sha256::evaluate(&(), vk_bytes).unwrap();
-    let tss_vk_hash = Fr::from_le_bytes_mod_order(&hash_bytes);
-
-    let out_bytes = PoseidonCRH::evaluate(&poseidon_canonical_config::<Fr>(), vec![tss_vk_hash]).unwrap();
-    let out: Vec<Fr> = out_bytes.to_field_elements().unwrap();
-    // because of modulus, we actually get two Fr elemeents, but we will only use the first one
-    out[0]
+fn pad_addressbook(ab: &AddressBook) -> AddressBook {
+    let mut ab_padded = ab.clone();
+    let dummy_party = WRAPS::keygen([0; 32]).unwrap();
+    let zero_weight = Fr::from(0);
+    while ab_padded.len() < MAX_AB_SIZE {
+        ab_padded.push((dummy_party.1.clone(), zero_weight));
+    }
+    ab_padded
 }
 
-fn hash_addressbook(ab: &AddressBook) -> Fr {
+fn hash_hints_vk(vk_bytes: &[u8]) -> Result<Fr, WRAPSError> {
+    let hash_bytes = Sha256::evaluate(&(), vk_bytes)
+        .map_err(|_| WRAPSError::CryptographyError)?;
+    let tss_vk_hash = Fr::from_le_bytes_mod_order(&hash_bytes);
+
+    let out_bytes = PoseidonCRH::evaluate(&poseidon_canonical_config::<Fr>(), vec![tss_vk_hash])
+        .map_err(|_| WRAPSError::CryptographyError)?;
+    let out: Vec<Fr> = out_bytes.to_field_elements().unwrap();
+    // because of modulus, we actually get two Fr elemeents, but we will only use the first one
+    Ok(out[0])
+}
+
+fn hash_addressbook(ab: &AddressBook) -> Result<Fr, WRAPSError> {
     let xcoords: Vec<Fr> = ab
         .iter()
         .map(|abe| abe.0.x)
@@ -367,10 +383,11 @@ fn hash_addressbook(ab: &AddressBook) -> Fr {
         .chain(ycoords.into_iter())
         .chain(weights.into_iter())
         .collect();
-    let out_bytes = PoseidonCRH::evaluate(&poseidon_canonical_config::<Fr>(), poseidon_input).unwrap();
+    let out_bytes = PoseidonCRH::evaluate(&poseidon_canonical_config::<Fr>(), poseidon_input)
+        .map_err(|_| WRAPSError::CryptographyError)?;
     let out: Vec<Fr> = out_bytes.to_field_elements().unwrap();
     // because of modulus, we actually get two Fr elemeents, but we will only use the first one
-    out[0]
+    Ok(out[0])
 }
 
 fn prepare_external_inputs(
@@ -379,7 +396,21 @@ fn prepare_external_inputs(
     next_ab: &AddressBook,
     next_tss_vk: &[u8],
     bitvector: &[bool; MAX_AB_SIZE],
-) -> Vec<Fr> {
+) -> Result<Vec<Fr>, WRAPSError> {
+    // assumes prev_ab and next_ab are already padded to MAX_AB_SIZE
+    if prev_ab.len() != MAX_AB_SIZE || next_ab.len() != MAX_AB_SIZE {
+        return Err(WRAPSError::InvalidInput(
+            "prepare_external_inputs expected padded AddressBooks".to_string()
+        ));
+    }
+
+    // assumes padded bitvector of size MAX_AB_SIZE
+    if bitvector.len() != MAX_AB_SIZE {
+        return Err(WRAPSError::InvalidInput(
+            "prepare_external_inputs expected padded bitvector".to_string()
+        ));
+    }
+
     let mut external_inputs_at_step = Vec::new();
     for i in 0..MAX_AB_SIZE {
         external_inputs_at_step.push(prev_ab[i].0.x);
@@ -398,10 +429,10 @@ fn prepare_external_inputs(
     external_inputs_at_step.push(verifier_challenge);
     external_inputs_at_step.push(prover_response);
 
-    external_inputs_at_step.push(hash_addressbook(next_ab));
-    external_inputs_at_step.push(hash_hints_vk(next_tss_vk));
+    external_inputs_at_step.push(hash_addressbook(&next_ab)?);
+    external_inputs_at_step.push(hash_hints_vk(next_tss_vk)?);
 
-    external_inputs_at_step
+    Ok(external_inputs_at_step)
 }
 
 
@@ -446,6 +477,7 @@ impl std::fmt::Display for WRAPSError {
         match *self {
             WRAPSError::InvalidInput(ref s) => write!(f, "Invalid input: {s}"),
             WRAPSError::CryptographyError => write!(f, "CryptographyError error"),
+            WRAPSError::AddressBookSizeExceeded => write!(f, "Address book size exceeded maximum allowed"),
         }
     }
 }
@@ -455,7 +487,7 @@ pub struct WRAPSTrustedSetup {}
 impl WRAPSTrustedSetup {
     pub fn setup() -> Result<(ProvingKey, VerificationKey), WRAPSError> {
         let mut rng = ark_std::rand::rngs::OsRng;
-        let F_circuit = TSSFCircuit::<MAX_AB_SIZE>::new(())
+        let F_circuit = Circuit::new(())
             .map_err(|_| WRAPSError::CryptographyError)?;
 
         let poseidon_config = poseidon_canonical_config::<Fr>();
@@ -482,11 +514,15 @@ pub struct WRAPS {}
 
 impl WRAPS {
 
-    pub fn keygen(seed: [u8; ENTROPY_SIZE]) -> (SchnorrPrivKey, SchnorrPubKey) {
+    pub fn keygen(
+        seed: [u8; ENTROPY_SIZE]
+    ) -> Result<(SchnorrPrivKey, SchnorrPubKey), WRAPSError> {
         // secret is a random scalar x, and the pubkey is y = xG
-        let pp = Schnorr::setup([0u8; 32]).unwrap();
-        let (pk, sk) = Schnorr::keygen(&pp, seed).unwrap();
-        (sk, pk)
+        let pp = Schnorr::setup([0u8; 32])
+            .map_err(|_| WRAPSError::CryptographyError)?;
+        let (pk, sk) = Schnorr::keygen(&pp, seed)
+            .map_err(|_| WRAPSError::CryptographyError)?;
+        Ok((sk, pk))
     }
 
     pub fn signing_protocol(
@@ -595,11 +631,32 @@ impl WRAPS {
             .map_err(|_| WRAPSError::CryptographyError)
     }
 
-    pub fn rotation_message(ab_next: &AddressBook, tss_vk: impl AsRef<[u8]>) -> Vec<u8> {
-        [
-            hash_addressbook(ab_next).into_bigint().to_bytes_le(), 
-            hash_hints_vk(tss_vk.as_ref()).into_bigint().to_bytes_le()
-        ].concat()
+    /// This is possibly only needed while computing the ledger ID
+    pub fn compute_addressbook_hash(
+        ab: &AddressBook
+    ) -> Result<AddressBookHash, WRAPSError> {
+        if ab.len() > MAX_AB_SIZE {
+            return Err(WRAPSError::AddressBookSizeExceeded);
+        }
+        let padded_ab = pad_addressbook(ab);
+
+        hash_addressbook(&padded_ab)
+    }
+
+    pub fn compute_rotation_message(
+        ab_next: &AddressBook,
+        tss_vk: impl AsRef<[u8]>
+    ) -> Result<Vec<u8>, WRAPSError> {
+        if ab_next.len() > MAX_AB_SIZE {
+            return Err(WRAPSError::AddressBookSizeExceeded);
+        }
+        let padded_ab_next = pad_addressbook(ab_next);
+
+        let msg = [
+            hash_addressbook(&padded_ab_next)?.into_bigint().to_bytes_le(),
+            hash_hints_vk(tss_vk.as_ref())?.into_bigint().to_bytes_le()
+        ].concat();
+        Ok(msg)
     }
 
     pub fn setup_prover(
@@ -633,49 +690,68 @@ impl WRAPS {
     #[allow(clippy::too_many_arguments)]
     /// Creates the first proof for the genesis AddressBook.
     pub fn construct_wraps_proof(
-        pk: &ProvingKey,                         // proving key output by sp1 setup
-        vk: &VerificationKey,                    // verifying key output by sp1 setup
-        ab_genesis_hash: &AddressBookHash,            // genesis AddressBook hash
-        prev_ab: &AddressBook,                        // current AddressBook
-        next_ab: &AddressBook,                        // next AddressBook
-        prev_proof: Option<UncompressedProofSerialized>,        // the previous proof
-        tss_vk: impl AsRef<[u8]>,                     // TSS verification key for the next AddressBook
-        aggregate_signature: &SchnorrSignature,       // threshold Schnorr signature attesting the next AddressBook
-        bitvector: &[bool; MAX_AB_SIZE],              // bitvector indicating which members signed the signature
+        pk: &ProvingKey,                                     // proving key output by sp1 setup
+        vk: &VerificationKey,                                // verifying key output by sp1 setup
+        ab_genesis_hash: &AddressBookHash,                   // genesis AddressBook hash
+        prev_ab: &AddressBook,                               // current AddressBook
+        next_ab: &AddressBook,                               // next AddressBook
+        prev_proof: Option<UncompressedProofSerialized>,     // the previous proof
+        tss_vk: impl AsRef<[u8]>,                            // TSS verification key for the next AddressBook
+        aggregate_signature: &SchnorrSignature,              // threshold Schnorr signature attesting the next AddressBook
+        bitvector: impl AsRef<[bool]>,                       // bitvector indicating which members signed the signature
     ) -> Result<(UncompressedProofSerialized, CompressedProofSerialized), WRAPSError> {
+        if prev_ab.len() != bitvector.as_ref().len() {
+            return Err(WRAPSError::InvalidInput(
+                "AddressBook and bitvector lengths do not match".to_string()
+            ));
+        }
+
+        if prev_ab.len() > MAX_AB_SIZE || next_ab.len() > MAX_AB_SIZE {
+            return Err(WRAPSError::AddressBookSizeExceeded);
+        }
+
+        // pad up inputs to MAX_AB_SIZE
+        let padded_prev_ab = pad_addressbook(prev_ab);
+        let padded_next_ab = pad_addressbook(next_ab);
+        let padded_bitvector: [bool; MAX_AB_SIZE] = {
+            let mut vec = bitvector.as_ref().to_vec();
+            vec.resize(MAX_AB_SIZE, false);
+            vec.try_into().unwrap()
+        };
+
         let is_genesis: bool = prev_proof.is_none();
         if is_genesis {
             // ensure genesis ab hash matches
-            assert_eq!(*ab_genesis_hash, hash_addressbook(prev_ab));
+            assert_eq!(*ab_genesis_hash, hash_addressbook(&padded_prev_ab)?);
             // first proof uses same address book for current and next
-            assert_eq!(hash_addressbook(next_ab), hash_addressbook(prev_ab));
+            assert_eq!(hash_addressbook(&padded_next_ab)?, hash_addressbook(&padded_prev_ab)?);
         }
 
-        let ab_rotation_message: Vec<u8> = [
-            hash_addressbook(&next_ab).into_bigint().to_bytes_le(), 
-            hash_hints_vk(tss_vk.as_ref()).into_bigint().to_bytes_le()
-        ].concat();
+        let ab_rotation_message: Vec<u8> = Self::compute_rotation_message(&padded_next_ab, tss_vk.as_ref())?;
 
         // compute aggregate public key
-        let aggregate_pubkey = (0..MAX_AB_SIZE)
-            .filter(|&i| bitvector[i])
-            .fold(ark_ed_on_bn254::EdwardsAffine::zero(), |acc, i| acc.add(prev_ab[i].0).into_affine());
+        let aggregate_pubkey: ark_ec::twisted_edwards::Affine<ark_ed_on_bn254::EdwardsConfig> = (0..prev_ab.len())
+            .filter(|&i| bitvector.as_ref()[i])
+            .fold(ark_ed_on_bn254::EdwardsAffine::zero(),|acc, i| acc.add(&prev_ab[i].0.clone()).into_affine());
 
         let schnorr_parameters = Schnorr::setup([0u8; 32]).unwrap();
         assert!(Schnorr::verify(&schnorr_parameters, &aggregate_pubkey, &ab_rotation_message, &aggregate_signature).unwrap());
 
         let external_inputs_at_step = prepare_external_inputs(
             &aggregate_signature,
-            &prev_ab,
-            &next_ab,
+            &padded_prev_ab,
+            &padded_next_ab,
             tss_vk.as_ref(),
-            bitvector,
-        );
+            &padded_bitvector,
+        )?;
 
         let mut ivc_instance = if is_genesis {
             let F_circuit = TSSFCircuit::<MAX_AB_SIZE>::new(())
                 .map_err(|_| WRAPSError::CryptographyError)?;
-            let initial_state = vec![hash_addressbook(&prev_ab), hash_hints_vk(tss_vk.as_ref())];
+            let initial_state = vec![
+                hash_addressbook(&padded_prev_ab)?,
+                hash_hints_vk(tss_vk.as_ref())?
+            ];
             let mut instance = N::init(&(pk.nova_pp.clone(), vk.nova_vp.clone()), F_circuit, initial_state.clone())
                 .map_err(|_| WRAPSError::CryptographyError)?;
             instance.prove_step(thread_rng(), VecF(external_inputs_at_step.clone()), None)
@@ -735,8 +811,8 @@ impl WRAPS {
         compressed_vk_serialized: &CompressedVerificationKeySerialized,
         proof_serialized: &CompressedProofSerialized,
     ) -> Result<bool, Error> {
-        type N = Nova<G1, G2, TSSFCircuit<MAX_AB_SIZE>, KZG<'static, PairingCurve>, Pedersen<G2>, false>;
-        type D = DeciderEth<G1, G2, TSSFCircuit<MAX_AB_SIZE>, KZG<'static, PairingCurve>, Pedersen<G2>, Groth16<PairingCurve>, N>;
+        type N = Nova<G1, G2, Circuit, KZG<'static, PairingCurve>, Pedersen<G2>, false>;
+        type D = DeciderEth<G1, G2, Circuit, KZG<'static, PairingCurve>, Pedersen<G2>, Groth16<PairingCurve>, N>;
 
         let decider_vp =
             VerifierParam::<
@@ -906,7 +982,7 @@ mod tests {
         let schnorr_parameters = Schnorr::setup([0u8; 32]).unwrap();
         // Build genesis address book and keys
         let (genesis_ab, genesis_keys) = create_new_addressbook();
-        let ab_genesis_hash = super::hash_addressbook(&genesis_ab);
+        let ab_genesis_hash = WRAPS::compute_addressbook_hash(&genesis_ab).unwrap();
 
         // -------------------------------- Global State across loop iterations --------------------------------
         let mut prev_uncompressed_wraps_proof = vec![];
@@ -924,10 +1000,7 @@ mod tests {
             let next_tss_vk = [0u8; 1280]; // placeholder for TSS vk bytes
 
             // message being signed via threshold Schnorr
-            let message: Vec<u8> = [
-                hash_addressbook(&next_ab).into_bigint().to_bytes_le(), 
-                hash_hints_vk(&next_tss_vk).into_bigint().to_bytes_le()
-            ].concat();
+            let message: Vec<u8> = WRAPS::compute_rotation_message(&next_ab, &next_tss_vk).unwrap();
 
             let (pks_present, sks_present) = signing_subset(&prev_ab, &prev_keys, &even_bitvector());
 
