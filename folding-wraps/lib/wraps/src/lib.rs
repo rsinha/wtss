@@ -59,11 +59,12 @@ use folding_schemes::folding::traits::CommittedInstanceOps;
 
 /********************************* Parameters *********************************/
 
-pub const MAX_AB_SIZE: usize = 128; // we need to pad up to this size
-pub const MAX_EXT_INPUTS: usize = 4 * MAX_AB_SIZE + 4;
 pub const ENTROPY_SIZE: usize = 32; // size of the seed for key generation
 
 /********************************* Configurable Types *********************************/
+
+/// We can only support address books up to this size.
+const MAX_AB_SIZE: usize = 128;
 
 type PairingCurve = ark_bn254::Bn254;
 type G1 = ark_bn254::G1Projective;
@@ -74,6 +75,8 @@ type JubJub = ark_ed_on_bn254::EdwardsProjective;
 type JubJubVar = ark_ed_on_bn254::constraints::EdwardsVar;
 
 /********************************* Derived Types *********************************/
+
+const MAX_EXT_INPUTS: usize = 4 * MAX_AB_SIZE + 4;
 
 type Schnorr = signature::schnorr::Schnorr<JubJub>;
 type SchnorrSignature = <Schnorr as SignatureScheme>::Signature;
@@ -160,7 +163,7 @@ pub struct VerificationKey {
 }
 
 #[derive(CanonicalSerialize, CanonicalDeserialize)]
-pub struct ProofData {
+struct ProofData {
     pub i: Fr,
     pub z_0: Vec<Fr>,
     pub z_i: Vec<Fr>,
@@ -215,10 +218,12 @@ impl<const K: usize> FCircuit<Fr> for TSSFCircuit<K> {
     type ExternalInputsVar = VecFpVar<Fr, MAX_EXT_INPUTS>;
 
     fn new(_params: Self::Params) -> Result<Self, Error> {
+        // This circuit has no tunable parameters; return the unit struct.
         Ok(Self { })
     }
 
     fn state_len(&self) -> usize {
+        // The folding state tracks the current address-book hash and hints hash.
         2
     }
 
@@ -231,6 +236,7 @@ impl<const K: usize> FCircuit<Fr> for TSSFCircuit<K> {
         external_inputs: Self::ExternalInputsVar,
     ) -> Result<Vec<FpVar<Fr>>, SynthesisError> {
 
+        // Lift the prior public keys into circuit variables for membership checks.
         let prev_pks = (0..K)
             .map(|i| SchnorrPubKeyVar::new_witness(cs.clone(), || Ok(
                 ark_ed_on_bn254::EdwardsAffine::new(
@@ -264,6 +270,7 @@ impl<const K: usize> FCircuit<Fr> for TSSFCircuit<K> {
         };
 
         // compute aggregate weight
+        // Sum the weights of parties flagged as present while tracking the global total.
         let mut aggregate_weight = FpVar::<Fr>::new_witness(cs.clone(), || Ok(Fr::from(0)))?;
         let mut total_weight = FpVar::<Fr>::new_witness(cs.clone(), || Ok(Fr::from(0)))?;
         for i in 0..K {
@@ -295,6 +302,7 @@ impl<const K: usize> FCircuit<Fr> for TSSFCircuit<K> {
             cs.clone(), poseidon_canonical_config::<Fr>()
         )?;
         let recomputed_prev_state = {
+            // Recreate the Poseidon hash that committed the previous address book.
             let x_coords: Vec<FpVar<Fr>> = (0..K)
                 .map(|i| external_inputs.0[3*i].clone())
                 .collect();
@@ -344,6 +352,7 @@ impl<const K: usize> FCircuit<Fr> for TSSFCircuit<K> {
     }
 }
 
+/// Pads an address book up to `MAX_AB_SIZE` using dummy zero-weight entries.
 fn pad_addressbook(ab: &AddressBook) -> AddressBook {
     let mut ab_padded = ab.clone();
     let dummy_party = WRAPS::keygen([0; 32]).unwrap();
@@ -354,6 +363,7 @@ fn pad_addressbook(ab: &AddressBook) -> AddressBook {
     ab_padded
 }
 
+/// Hashes the serialized TSS verification key using SHA-256 followed by Poseidon.
 fn hash_hints_vk(vk_bytes: &[u8]) -> Result<Fr, WRAPSError> {
     let hash_bytes = Sha256::evaluate(&(), vk_bytes)
         .map_err(|_| WRAPSError::CryptographyError)?;
@@ -366,6 +376,7 @@ fn hash_hints_vk(vk_bytes: &[u8]) -> Result<Fr, WRAPSError> {
     Ok(out[0])
 }
 
+/// Hashes all address book public keys and weights via Poseidon.
 fn hash_addressbook(ab: &AddressBook) -> Result<Fr, WRAPSError> {
     let xcoords: Vec<Fr> = ab
         .iter()
@@ -390,6 +401,7 @@ fn hash_addressbook(ab: &AddressBook) -> Result<Fr, WRAPSError> {
     Ok(out[0])
 }
 
+/// Formats user-visible data into the external-input vector consumed by the Nova circuit.
 fn prepare_external_inputs(
     aggregate_signature: &SchnorrSignature,
     prev_ab: &AddressBook,
@@ -437,12 +449,14 @@ fn prepare_external_inputs(
 
 
 impl ProvingKey {
+    /// Recreates a proving key from serialized Nova and decider artifacts.
     pub fn deserialize(nova_pp: impl AsRef<[u8]>, decider_pp: impl AsRef<[u8]>) -> Result<Self, Error> {
         let nova_pp: NPP = N::pp_deserialize_with_mode(nova_pp.as_ref(), ark_serialize::Compress::Yes, ark_serialize::Validate::Yes, ())?;
         let decider_pp = DPP::deserialize_compressed(decider_pp.as_ref())?;
         Ok(Self { nova_pp, decider_pp })
     }
 
+    /// Serializes both Nova and decider proving parameters.
     pub fn serialize(&self) -> Result<(UncompressedProvingKeySerialized, CompressedProvingKeySerialized), Error> {
         let mut nova_pp_serialized: UncompressedProvingKeySerialized = vec![];
         self.nova_pp.serialize_compressed(&mut nova_pp_serialized)?;
@@ -454,12 +468,14 @@ impl ProvingKey {
 }
 
 impl VerificationKey {
+    /// Recreates a verification key from serialized Nova and decider artifacts.
     pub fn deserialize(nova_vp: impl AsRef<[u8]>, decider_vp: impl AsRef<[u8]>) -> Result<Self, Error> {
         let nova_vp: NVP = N::vp_deserialize_with_mode(nova_vp.as_ref(), ark_serialize::Compress::Yes, ark_serialize::Validate::Yes, ())?;
         let decider_vp = DVP::deserialize_compressed(decider_vp.as_ref())?;
         Ok(Self { nova_vp, decider_vp })
     }
 
+    /// Serializes both Nova and decider verifier parameters.
     pub fn serialize(&self) -> Result<(UncompressedVerificationKeySerialized, CompressedVerificationKeySerialized), Error> {
         let mut nova_vp_serialized: UncompressedVerificationKeySerialized = vec![];
         self.nova_vp.serialize_compressed(&mut nova_vp_serialized)?;
@@ -485,6 +501,7 @@ impl std::fmt::Display for WRAPSError {
 pub struct WRAPSTrustedSetup {}
 
 impl WRAPSTrustedSetup {
+    /// Runs the trusted setup to produce matching proving and verification keys for WRAPS.
     pub fn setup() -> Result<(ProvingKey, VerificationKey), WRAPSError> {
         let mut rng = ark_std::rand::rngs::OsRng;
         let F_circuit = Circuit::new(())
@@ -493,6 +510,7 @@ impl WRAPSTrustedSetup {
         let poseidon_config = poseidon_canonical_config::<Fr>();
 
         let nova_preprocess_params = PreprocessorParam::new(poseidon_config, F_circuit);
+        // Generate Nova parameters for the WRAPS folding circuit.
         let (nova_pp, nova_vp) = N::preprocess(
             &mut rng,
             &nova_preprocess_params
