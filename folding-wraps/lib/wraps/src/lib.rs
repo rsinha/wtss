@@ -96,8 +96,8 @@ type Weight = Fr;
 type AddressBookHash = Fr;
 type TSSVKHash = Fr;
 type AddressBookEntry = (schnorr::PublicKey<JubJub>, Weight);
-type AddressBook = [AddressBookEntry; MAX_AB_SIZE];
-type Keys = [schnorr::SecretKey<JubJub>; MAX_AB_SIZE];
+type AddressBook = Vec<AddressBookEntry>;
+type Keys = Vec<schnorr::SecretKey<JubJub>>;
 
 type N = Nova<G1, G2, TSSFCircuit<MAX_AB_SIZE>, KZG<'static, PairingCurve>, Pedersen<G2>, false>;
 type NovaProof = <N as FoldingScheme<G1, G2, TSSFCircuit<MAX_AB_SIZE>>>::IVCProof;
@@ -106,6 +106,64 @@ type NVP = VerifierParams<G1, G2, KZG<'static, PairingCurve>, Pedersen<G2>, fals
 type D = DeciderEth<G1, G2, TSSFCircuit<MAX_AB_SIZE>, KZG<'static, PairingCurve>, Pedersen<G2>, Groth16<PairingCurve>, N>;
 type DPP = (GrothProverKey, <KZG<'static, PairingCurve> as CommitmentScheme<G1>>::ProverParams);
 type DVP = VerifierParam<G1, <KZG<'static, PairingCurve> as CommitmentScheme<G1>>::VerifierParams, GrothVerifierKey>;
+
+/// Error enum to wrap underlying failures in RAPS operations, 
+/// or wrap errors coming from dependencies (namely, arkworks).
+#[derive(Debug)]
+pub enum WRAPSError {
+    /// Multi-purpose error type for describing invalid inputs
+    InvalidInput(String),
+    /// Multi-purpose error type for describing prover failure
+    CryptographyError,
+}
+
+/// Phases of the signing protocol: 3 rounds followed by aggregation
+#[derive(Clone, Debug)]
+pub enum SigningProtocolPhase {
+    R1 = 1,
+    R2 = 2,
+    R3 = 3,
+    Aggregate = 4,
+}
+
+pub type SigningProtocolMessage = Vec<u8>;
+pub type CompressedProofSerialized = Vec<u8>;
+pub type UncompressedProofSerialized = Vec<u8>;
+
+pub enum SigningProtocolObject {
+    ProtocolMessage(SigningProtocolMessage),
+    ProtocolOutput(SchnorrSignature),
+}
+
+pub type UncompressedProvingKeySerialized = Vec<u8>;
+pub type CompressedProvingKeySerialized = Vec<u8>;
+pub type UncompressedVerificationKeySerialized = Vec<u8>;
+pub type CompressedVerificationKeySerialized = Vec<u8>;
+
+pub type UncompressedProvingKey = NPP;
+pub type CompressedProvingKey = DPP;
+pub type UncompressedVerificationKey = NVP;
+pub type CompressedVerificationKey = DVP;
+
+pub struct ProvingKey {
+    pub nova_pp: UncompressedProvingKey,
+    pub decider_pp: CompressedProvingKey,
+}
+
+pub struct VerificationKey {
+    pub nova_vp: UncompressedVerificationKey,
+    pub decider_vp: CompressedVerificationKey,
+}
+
+#[derive(CanonicalSerialize, CanonicalDeserialize)]
+pub struct ProofData {
+    pub i: Fr,
+    pub z_0: Vec<Fr>,
+    pub z_i: Vec<Fr>,
+    pub U_i_commitments: Vec<G1>,
+    pub u_i_commitments: Vec<G1>,
+    pub proof: EthProof<G1, KZG<'static, PairingCurve>, Groth16<PairingCurve>>,
+}
 
 /********************************* Useful Definitions *********************************/
 
@@ -346,17 +404,8 @@ fn prepare_external_inputs(
     external_inputs_at_step
 }
 
-pub type UncompressedProvingKeySerialized = Vec<u8>;
-pub type CompressedProvingKeySerialized = Vec<u8>;
-pub type UncompressedVerificationKeySerialized = Vec<u8>;
-pub type CompressedVerificationKeySerialized = Vec<u8>;
 
-pub struct WRAPSProvingKey {
-    pub nova_pp: NPP,
-    pub decider_pp: DPP,
-}
-
-impl WRAPSProvingKey {
+impl ProvingKey {
     pub fn deserialize(nova_pp: impl AsRef<[u8]>, decider_pp: impl AsRef<[u8]>) -> Result<Self, Error> {
         let nova_pp: NPP = N::pp_deserialize_with_mode(nova_pp.as_ref(), ark_serialize::Compress::Yes, ark_serialize::Validate::Yes, ())?;
         let decider_pp = DPP::deserialize_compressed(decider_pp.as_ref())?;
@@ -373,12 +422,7 @@ impl WRAPSProvingKey {
     }
 }
 
-pub struct WRAPSVerificationKey {
-    pub nova_vp: NVP,
-    pub decider_vp: DVP,
-}
-
-impl WRAPSVerificationKey {
+impl VerificationKey {
     pub fn deserialize(nova_vp: impl AsRef<[u8]>, decider_vp: impl AsRef<[u8]>) -> Result<Self, Error> {
         let nova_vp: NVP = N::vp_deserialize_with_mode(nova_vp.as_ref(), ark_serialize::Compress::Yes, ark_serialize::Validate::Yes, ())?;
         let decider_vp = DVP::deserialize_compressed(decider_vp.as_ref())?;
@@ -395,34 +439,6 @@ impl WRAPSVerificationKey {
     }
 }
 
-/// Phases of the signing protocol: 3 rounds followed by aggregation
-#[derive(Clone, Debug)]
-pub enum SigningProtocolPhase {
-    R1 = 1,
-    R2 = 2,
-    R3 = 3,
-    Aggregate = 4,
-}
-
-pub enum SigningProtocolObject {
-    ProtocolMessage(SigningProtocolMessage),
-    ProtocolOutput(SchnorrSignature),
-}
-
-pub type SigningProtocolMessage = Vec<u8>;
-pub type CompressedProofSerialized = Vec<u8>;
-pub type UncompressedProofSerialized = Vec<u8>;
-
-/// Error enum to wrap underlying failures in RAPS operations, 
-/// or wrap errors coming from dependencies (namely, arkworks).
-#[derive(Debug)]
-pub enum WRAPSError {
-    /// Multi-purpose error type for describing invalid inputs
-    InvalidInput(String),
-    /// Multi-purpose error type for describing prover failure
-    CryptographyError,
-}
-
 impl std::error::Error for WRAPSError {}
 
 impl std::fmt::Display for WRAPSError {
@@ -434,20 +450,10 @@ impl std::fmt::Display for WRAPSError {
     }
 }
 
-#[derive(CanonicalSerialize, CanonicalDeserialize)]
-pub struct ProofData {
-    pub i: Fr,
-    pub z_0: Vec<Fr>,
-    pub z_i: Vec<Fr>,
-    pub U_i_commitments: Vec<G1>,
-    pub u_i_commitments: Vec<G1>,
-    pub proof: EthProof<G1, KZG<'static, PairingCurve>, Groth16<PairingCurve>>,
-}
-
 pub struct WRAPSTrustedSetup {}
 
 impl WRAPSTrustedSetup {
-    pub fn setup() -> Result<(WRAPSProvingKey, WRAPSVerificationKey), WRAPSError> {
+    pub fn setup() -> Result<(ProvingKey, VerificationKey), WRAPSError> {
         let mut rng = ark_std::rand::rngs::OsRng;
         let F_circuit = TSSFCircuit::<MAX_AB_SIZE>::new(())
             .map_err(|_| WRAPSError::CryptographyError)?;
@@ -466,8 +472,8 @@ impl WRAPSTrustedSetup {
         ).map_err(|_| WRAPSError::CryptographyError)?;
 
         Ok((
-            WRAPSProvingKey { nova_pp, decider_pp },
-            WRAPSVerificationKey { nova_vp, decider_vp }
+            ProvingKey { nova_pp, decider_pp },
+            VerificationKey { nova_vp, decider_vp }
         ))
     }
 }
@@ -580,12 +586,13 @@ impl WRAPS {
         public_keys: &[SchnorrPubKey],
         message: impl AsRef<[u8]>,
         signature: &SchnorrSignature
-    ) -> bool {
+    ) -> Result<bool, WRAPSError> {
         let pp = Schnorr::setup([0u8; 32]).unwrap(); // dummy entropy for dummy parameters
         let aggregate_pk = public_keys
             .iter()
             .fold(SchnorrPubKey::zero(), |acc, pk| (acc + pk).into_affine());
-        Schnorr::verify(&pp, &aggregate_pk, message.as_ref(), signature).unwrap()
+        Schnorr::verify(&pp, &aggregate_pk, message.as_ref(), signature)
+            .map_err(|_| WRAPSError::CryptographyError)
     }
 
     pub fn rotation_message(ab_next: &AddressBook, tss_vk: impl AsRef<[u8]>) -> Vec<u8> {
@@ -598,8 +605,8 @@ impl WRAPS {
     pub fn setup_prover(
         nova_pp: impl AsRef<[u8]>,
         decider_pp: impl AsRef<[u8]>,
-    ) -> Result<WRAPSProvingKey, WRAPSError> {
-        let pk = WRAPSProvingKey::deserialize(nova_pp, decider_pp)
+    ) -> Result<ProvingKey, WRAPSError> {
+        let pk = ProvingKey::deserialize(nova_pp, decider_pp)
             .map_err(|_| WRAPSError::CryptographyError)?;
         Ok(pk)
     }
@@ -607,14 +614,14 @@ impl WRAPS {
     pub fn setup_verifier(
         nova_vp: impl AsRef<[u8]>,
         decider_vp: impl AsRef<[u8]>,
-    ) -> Result<WRAPSVerificationKey, WRAPSError> {
-        let vk = WRAPSVerificationKey::deserialize(nova_vp, decider_vp)
+    ) -> Result<VerificationKey, WRAPSError> {
+        let vk = VerificationKey::deserialize(nova_vp, decider_vp)
             .map_err(|_| WRAPSError::CryptographyError)?;
         Ok(vk)
     }
 
     pub fn get_compressed_verification_key_bytes(
-        vk: &WRAPSVerificationKey
+        vk: &VerificationKey
     ) -> Result<CompressedVerificationKeySerialized, WRAPSError> {
         let mut decider_vp_serialized = vec![];
         vk.decider_vp.serialize_compressed(&mut decider_vp_serialized)
@@ -626,8 +633,8 @@ impl WRAPS {
     #[allow(clippy::too_many_arguments)]
     /// Creates the first proof for the genesis AddressBook.
     pub fn construct_wraps_proof(
-        pk: &WRAPSProvingKey,                         // proving key output by sp1 setup
-        vk: &WRAPSVerificationKey,                    // verifying key output by sp1 setup
+        pk: &ProvingKey,                         // proving key output by sp1 setup
+        vk: &VerificationKey,                    // verifying key output by sp1 setup
         ab_genesis_hash: &AddressBookHash,            // genesis AddressBook hash
         prev_ab: &AddressBook,                        // current AddressBook
         next_ab: &AddressBook,                        // next AddressBook
