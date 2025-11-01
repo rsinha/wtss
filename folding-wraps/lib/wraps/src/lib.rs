@@ -152,9 +152,9 @@ type GrothVerifierKey = <Groth16<PairingCurve> as ark_snark::SNARK<Fr>>::Verifyi
 type Weight = Fr;
 type AddressBookHash = Fr;
 type TSSVKHash = Fr;
-type AddressBookEntry = (schnorr::PublicKey<JubJub>, Weight);
+type AddressBookEntry = (SchnorrPubKey, Weight);
 type AddressBook = Vec<AddressBookEntry>;
-type Keys = Vec<schnorr::SecretKey<JubJub>>;
+type Keys = Vec<SchnorrPrivKey>;
 
 type Circuit = TSSFCircuit<MAX_AB_SIZE>;
 type N = Nova<G1, G2, Circuit, KZG<'static, PairingCurve>, Pedersen<G2>, false>;
@@ -238,16 +238,6 @@ impl<const K: usize> FCircuit<Fr> for TSSFCircuit<K> {
         z_i: Vec<FpVar<Fr>>,
         external_inputs: Self::ExternalInputsVar,
     ) -> Result<Vec<FpVar<Fr>>, SynthesisError> {
-
-        // Lift the prior public keys into circuit variables for membership checks.
-        let prev_pks = (0..K)
-            .map(|i| SchnorrPubKeyVar::new_witness(cs.clone(), || Ok(
-                ark_ed_on_bn254::EdwardsAffine::new(
-                    external_inputs.0[3*i + 0].value()?,
-                    external_inputs.0[3*i + 1].value()?
-                )
-            )).unwrap())
-            .collect::<Vec<_>>();
 
         let prev_pk_vars = (0..K)
             .map(|i| JubJubVar::new_witness(cs.clone(), || Ok(
@@ -357,8 +347,6 @@ impl<const K: usize> FCircuit<Fr> for TSSFCircuit<K> {
 
         // enforce that the previous public keys are equal to the external inputs
         for i in 0..K {
-            prev_pks[i].pub_key.x.enforce_equal(&external_inputs.0[3*i + 0])?;
-            prev_pks[i].pub_key.y.enforce_equal(&external_inputs.0[3*i + 1])?;
             prev_pk_vars[i].x.enforce_equal(&external_inputs.0[3*i + 0])?;
             prev_pk_vars[i].y.enforce_equal(&external_inputs.0[3*i + 1])?;
         }
@@ -384,11 +372,16 @@ fn pad_addressbook(ab: &AddressBook) -> AddressBook {
 
 /// Hashes the serialized TSS verification key using SHA-256 followed by Poseidon.
 fn hash_hints_vk(vk_bytes: &[u8]) -> Result<Fr, WRAPSError> {
-    let hash_bytes = Sha256::evaluate(&(), vk_bytes)
-        .map_err(|_| WRAPSError::CryptographyError)?;
-    let tss_vk_hash = Fr::from_le_bytes_mod_order(&hash_bytes);
+    let mut tss_vk_hash_elements = Vec::new();
+    let mut i = 0;
+    while i < vk_bytes.len() {
+        let start= i;
+        let end = std::cmp::min(i + 32, vk_bytes.len());
+        tss_vk_hash_elements.push(Fr::from_le_bytes_mod_order(&vk_bytes[start..end]));
+        i += 32;
+    }
 
-    let out_bytes = PoseidonCRH::evaluate(&poseidon_canonical_config::<Fr>(), vec![tss_vk_hash])
+    let out_bytes = PoseidonCRH::evaluate(&poseidon_canonical_config::<Fr>(), tss_vk_hash_elements)
         .map_err(|_| WRAPSError::CryptographyError)?;
     let out: Vec<Fr> = out_bytes.to_field_elements().unwrap();
     // because of modulus, we actually get two Fr elemeents, but we will only use the first one
@@ -1019,7 +1012,8 @@ mod tests {
         let schnorr_parameters = Schnorr::setup(rng.gen()).unwrap();
         let mut keys = Vec::new();
         let mut ab = Vec::new();
-        for _i in 0..MAX_AB_SIZE {
+        let ab_size = rng.gen_range(MAX_AB_SIZE/4..=MAX_AB_SIZE);
+        for _i in 0..ab_size {
             let (pk, sk) = Schnorr::keygen(&schnorr_parameters, rng.gen()).unwrap();
             let weight = Fr::from(1);
             keys.push(sk);
@@ -1028,19 +1022,19 @@ mod tests {
         (ab.try_into().unwrap(), keys.try_into().unwrap())
     }
 
-    fn even_bitvector() -> [bool; MAX_AB_SIZE] {
-        std::array::from_fn(|i| i % 2 == 0 || i % 3 == 0)
+    fn even_bitvector(ab: &AddressBook) -> Vec<bool> {
+        ab.iter().enumerate().map(|(i, _)| i % 2 == 0 || i % 3 == 0).collect()
     }
 
     fn signing_subset<'a>(
         ab: &'a AddressBook,
         keys: &'a Keys,
-        bitvector: &[bool; MAX_AB_SIZE],
+        bitvector: impl AsRef<[bool]>,
     ) -> (Vec<SchnorrPubKey>, Vec<&'a SchnorrPrivKey>) {
         let mut pks = Vec::new();
         let mut sk_refs = Vec::new();
-        for i in 0..MAX_AB_SIZE {
-            if bitvector[i] {
+        for i in 0..bitvector.as_ref().len() {
+            if bitvector.as_ref()[i] {
                 pks.push(ab[i].0);
                 sk_refs.push(&keys[i]);
             }
@@ -1175,7 +1169,7 @@ mod tests {
             // message being signed via threshold Schnorr
             let message: Vec<u8> = WRAPS::compute_rotation_message(&next_ab, &next_tss_vk).unwrap();
 
-            let (pks_present, sks_present) = signing_subset(&prev_ab, &prev_keys, &even_bitvector());
+            let (pks_present, sks_present) = signing_subset(&prev_ab, &prev_keys, &even_bitvector(&prev_ab));
 
             // compute aggregate public key
             let aggregate_pubkey = pks_present
@@ -1197,13 +1191,15 @@ mod tests {
                 if i == 0 { None } else { Some(prev_uncompressed_wraps_proof.clone()) },
                 &next_tss_vk,
                 &aggregate_signature,
-                &even_bitvector(),
+                &even_bitvector(&prev_ab),
             ).expect("WRAPS proof should be created");
             println!("Step {} WRAPS proof creation time: {:?}", i, start.elapsed());
 
             let compressed_vk_bytes = WRAPS::get_compressed_verification_key_bytes(&wraps_vk).unwrap();
-
-            let verified = WRAPS::verify_compressed_wraps_proof(&compressed_vk_bytes, &next_compressed).unwrap();
+            let verified = WRAPS::verify_compressed_wraps_proof(
+                &compressed_vk_bytes,
+                &next_compressed
+            ).unwrap();
             assert!(verified);
 
             prev_ab = next_ab;
