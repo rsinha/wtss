@@ -68,3 +68,6 @@ ark-vesta = { version = "^0.5.0", default-features = false }
 
 # Local crates
 folding-schemes = { path = "lib/folding-schemes", default-features = false }
+
+[profile.test]
+opt-level = 3
