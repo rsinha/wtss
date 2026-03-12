@@ -96,18 +96,14 @@ pub type UncompressedVerificationKeySerialized = Vec<u8>;
 pub type CompressedVerificationKeySerialized = Vec<u8>;
 
 pub type UncompressedProvingKey = NPP;
-pub type CompressedProvingKey = DPP;
 pub type UncompressedVerificationKey = NVP;
-pub type CompressedVerificationKey = DVP;
 
 pub struct ProvingKey {
     pub nova_pp: UncompressedProvingKey,
-    pub decider_pp: CompressedProvingKey,
 }
 
 pub struct VerificationKey {
     pub nova_vp: UncompressedVerificationKey,
-    pub decider_vp: CompressedVerificationKey,
 }
 
 /********************************* Parameters *********************************/
@@ -146,9 +142,6 @@ type ThresholdSchnorrR1Msg = signature::schnorr::ThresholdSchnorrMessage1;
 type ThresholdSchnorrR2Msg = signature::schnorr::ThresholdSchnorrMessage2<JubJub>;
 type ThresholdSchnorrR3Msg = signature::schnorr::ThresholdSchnorrMessage3<JubJub>;
 
-type GrothProverKey = <Groth16<PairingCurve> as ark_snark::SNARK<Fr>>::ProvingKey;
-type GrothVerifierKey = <Groth16<PairingCurve> as ark_snark::SNARK<Fr>>::VerifyingKey;
-
 type Weight = Fr;
 type AddressBookHash = Fr;
 type TSSVKHash = Fr;
@@ -162,8 +155,6 @@ type NovaProof = <N as FoldingScheme<G1, G2, Circuit>>::IVCProof;
 type NPP = ProverParams<G1, G2, KZG<'static, PairingCurve>, Pedersen<G2>, false>;
 type NVP = VerifierParams<G1, G2, KZG<'static, PairingCurve>, Pedersen<G2>, false>;
 type D = DeciderEth<G1, G2, Circuit, KZG<'static, PairingCurve>, Pedersen<G2>, Groth16<PairingCurve>, N>;
-type DPP = (GrothProverKey, <KZG<'static, PairingCurve> as CommitmentScheme<G1>>::ProverParams);
-type DVP = VerifierParam<G1, <KZG<'static, PairingCurve> as CommitmentScheme<G1>>::VerifierParams, GrothVerifierKey>;
 
 #[derive(CanonicalSerialize, CanonicalDeserialize)]
 struct ProofData {
@@ -462,39 +453,31 @@ fn prepare_external_inputs(
 
 impl ProvingKey {
     /// Recreates a proving key from serialized Nova and decider artifacts.
-    pub fn deserialize(nova_pp: impl AsRef<[u8]>, decider_pp: impl AsRef<[u8]>) -> Result<Self, Error> {
+    pub fn deserialize(nova_pp: impl AsRef<[u8]>) -> Result<Self, Error> {
         let nova_pp: NPP = N::pp_deserialize_with_mode(nova_pp.as_ref(), ark_serialize::Compress::Yes, ark_serialize::Validate::Yes, ())?;
-        let decider_pp = DPP::deserialize_compressed(decider_pp.as_ref())?;
-        Ok(Self { nova_pp, decider_pp })
+        Ok(Self { nova_pp })
     }
 
     /// Serializes both Nova and decider proving parameters.
-    pub fn serialize(&self) -> Result<(UncompressedProvingKeySerialized, CompressedProvingKeySerialized), Error> {
+    pub fn serialize(&self) -> Result<UncompressedProvingKeySerialized, Error> {
         let mut nova_pp_serialized: UncompressedProvingKeySerialized = vec![];
         self.nova_pp.serialize_compressed(&mut nova_pp_serialized)?;
-
-        let mut decider_pp_serialized: CompressedProvingKeySerialized = vec![];
-        self.decider_pp.serialize_compressed(&mut decider_pp_serialized)?;
-        Ok((nova_pp_serialized, decider_pp_serialized))
+        Ok(nova_pp_serialized)
     }
 }
 
 impl VerificationKey {
     /// Recreates a verification key from serialized Nova and decider artifacts.
-    pub fn deserialize(nova_vp: impl AsRef<[u8]>, decider_vp: impl AsRef<[u8]>) -> Result<Self, Error> {
+    pub fn deserialize(nova_vp: impl AsRef<[u8]>) -> Result<Self, Error> {
         let nova_vp: NVP = N::vp_deserialize_with_mode(nova_vp.as_ref(), ark_serialize::Compress::Yes, ark_serialize::Validate::Yes, ())?;
-        let decider_vp = DVP::deserialize_compressed(decider_vp.as_ref())?;
-        Ok(Self { nova_vp, decider_vp })
+        Ok(Self { nova_vp })
     }
 
     /// Serializes both Nova and decider verifier parameters.
-    pub fn serialize(&self) -> Result<(UncompressedVerificationKeySerialized, CompressedVerificationKeySerialized), Error> {
+    pub fn serialize(&self) -> Result<UncompressedVerificationKeySerialized, Error> {
         let mut nova_vp_serialized: UncompressedVerificationKeySerialized = vec![];
         self.nova_vp.serialize_compressed(&mut nova_vp_serialized)?;
-
-        let mut decider_vp_serialized: CompressedVerificationKeySerialized = vec![];
-        self.decider_vp.serialize_compressed(&mut decider_vp_serialized)?;
-        Ok((nova_vp_serialized, decider_vp_serialized))
+        Ok(nova_vp_serialized)
     }
 }
 
@@ -528,14 +511,9 @@ impl WRAPSTrustedSetup {
             &nova_preprocess_params
         ).map_err(|_| WRAPSError::CryptographyError)?;
 
-        let (decider_pp, decider_vp) = D::preprocess(
-            &mut rng,
-            ((nova_pp.clone(), nova_vp.clone()), F_circuit.state_len())
-        ).map_err(|_| WRAPSError::CryptographyError)?;
-
         Ok((
-            ProvingKey { nova_pp, decider_pp },
-            VerificationKey { nova_vp, decider_vp }
+            ProvingKey { nova_pp },
+            VerificationKey { nova_vp }
         ))
     }
 }
@@ -766,10 +744,9 @@ impl WRAPS {
     /// * `Err(WRAPSError::CryptographyError)` if deserialization fails.
     pub fn setup_prover(
         nova_pp: impl AsRef<[u8]>,
-        decider_pp: impl AsRef<[u8]>,
     ) -> Result<ProvingKey, WRAPSError> {
         // Deserialize both Nova and decider proving artifacts from disk-ready bytes.
-        let pk = ProvingKey::deserialize(nova_pp, decider_pp)
+        let pk = ProvingKey::deserialize(nova_pp)
             .map_err(|_| WRAPSError::CryptographyError)?;
         Ok(pk)
     }
@@ -785,31 +762,11 @@ impl WRAPS {
     /// * `Err(WRAPSError::CryptographyError)` if deserialization fails.
     pub fn setup_verifier(
         nova_vp: impl AsRef<[u8]>,
-        decider_vp: impl AsRef<[u8]>,
     ) -> Result<VerificationKey, WRAPSError> {
         // Deserialize the verification artifacts for Nova and the decider.
-        let vk = VerificationKey::deserialize(nova_vp, decider_vp)
+        let vk = VerificationKey::deserialize(nova_vp)
             .map_err(|_| WRAPSError::CryptographyError)?;
         Ok(vk)
-    }
-
-    /// Serializes the decider portion of a verification key into compressed bytes.
-    ///
-    /// # Arguments
-    /// * `vk` - Verification key whose decider verifier parameters will be compressed.
-    ///
-    /// # Returns
-    /// * `Ok(Vec<u8>)` holding the compressed decider verifier parameters.
-    /// * `Err(WRAPSError::CryptographyError)` if serialization fails.
-    pub fn get_compressed_verification_key_bytes(
-        vk: &VerificationKey
-    ) -> Result<CompressedVerificationKeySerialized, WRAPSError> {
-        let mut decider_vp_serialized = vec![];
-        // Store only the decider verifier parameters; Nova verifier data stays uncompressed elsewhere.
-        vk.decider_vp.serialize_compressed(&mut decider_vp_serialized)
-            .map_err(|_| WRAPSError::CryptographyError)?;
-
-        Ok(decider_vp_serialized)
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -842,7 +799,7 @@ impl WRAPS {
         tss_vk: impl AsRef<[u8]>,                            // TSS verification key for the next AddressBook
         aggregate_signature: &SchnorrSignature,              // threshold Schnorr signature attesting the next AddressBook
         bitvector: impl AsRef<[bool]>,                       // bitvector indicating which members signed the signature
-    ) -> Result<(UncompressedProofSerialized, CompressedProofSerialized), WRAPSError> {
+    ) -> Result<UncompressedProofSerialized, WRAPSError> {
         if prev_ab.len() != bitvector.as_ref().len() {
             return Err(WRAPSError::InvalidInput(
                 "AddressBook and bitvector lengths do not match".to_string()
@@ -919,44 +876,9 @@ impl WRAPS {
         let mut next_ivc_proof_encoded = vec![];
         // Persist the updated uncompressed IVC proof for future iterations.
         ivc_instance.ivc_proof().serialize_compressed(&mut next_ivc_proof_encoded).unwrap();
+        println!("ivc proof size: {} bytes", next_ivc_proof_encoded.len());
 
-        // Produce the succinct decider proof for the current state transition.
-        let proof = D::prove(thread_rng(), pk.decider_pp.clone(), ivc_instance.clone())
-            .map_err(|_| WRAPSError::CryptographyError)?;
-
-        // Double-check the decider proof before returning to catch internal inconsistencies.
-        let verified = D::verify(
-            vk.decider_vp.clone(),
-            ivc_instance.i,
-            ivc_instance.z_0.clone(),
-            ivc_instance.z_i.clone(),
-            &ivc_instance.U_i.get_commitments(),
-            &ivc_instance.u_i.get_commitments(),
-            &proof,
-        ).map_err(|_| WRAPSError::CryptographyError)?;
-        assert!(verified);
-
-        // serialize the proof
-        let compressed_proof = ProofData {
-            i: ivc_instance.i,
-            z_0: ivc_instance.z_0,
-            z_i: ivc_instance.z_i,
-            U_i_commitments: ivc_instance.U_i.get_commitments(),
-            u_i_commitments: ivc_instance.u_i.get_commitments(),
-            proof,
-        };
-        let mut compressed_proof_serialized = vec![];
-        // Archive the decider proof in compressed form for on-chain / off-chain verification.
-        compressed_proof.serialize_compressed(&mut compressed_proof_serialized).unwrap();
-
-        let decider_vp_serialized = Self::get_compressed_verification_key_bytes(vk)?;
-
-        assert!(Self::verify_compressed_wraps_proof(
-            &decider_vp_serialized,
-            &compressed_proof_serialized
-        ).map_err(|_| WRAPSError::CryptographyError)?);
-
-        Ok((next_ivc_proof_encoded, compressed_proof_serialized))
+        Ok(next_ivc_proof_encoded)
     }
 
     /// Checks a compressed WRAPS proof against a compressed verification key.
@@ -1119,14 +1041,12 @@ mod tests {
     #[test]
     fn wraps_trusted_setup() {
         let (pk, vk) = WRAPSTrustedSetup::setup().unwrap();
-        let (nova_pp_serialized, decider_pp_serialized) = pk.serialize().unwrap();
-        let (nova_vp_serialized, decider_vp_serialized) = vk.serialize().unwrap();
+        let nova_pp_serialized = pk.serialize().unwrap();
+        let nova_vp_serialized = vk.serialize().unwrap();
 
         let cwd = env::current_dir().unwrap();
         std::fs::write(cwd.join("resources/nova_pp.bin"), &nova_pp_serialized).unwrap();
         std::fs::write(cwd.join("resources/nova_vp.bin"), &nova_vp_serialized).unwrap();
-        std::fs::write(cwd.join("resources/decider_pp.bin"), &decider_pp_serialized).unwrap();
-        std::fs::write(cwd.join("resources/decider_vp.bin"), &decider_vp_serialized).unwrap();
     }
 
     #[test]
@@ -1137,13 +1057,11 @@ mod tests {
         let cwd = env::current_dir().unwrap();
         let nova_pp_bytes = std::fs::read(cwd.join("resources/nova_pp.bin")).unwrap();
         let nova_vp_bytes = std::fs::read(cwd.join("resources/nova_vp.bin")).unwrap();
-        let decider_pp_bytes = std::fs::read(cwd.join("resources/decider_pp.bin")).unwrap();
-        let decider_vp_bytes = std::fs::read(cwd.join("resources/decider_vp.bin")).unwrap();
         println!("Read all parameters from disk: {:?}", start.elapsed());
 
         let start = std::time::Instant::now();
-        let wraps_pk = WRAPS::setup_prover(nova_pp_bytes, decider_pp_bytes).unwrap();
-        let wraps_vk = WRAPS::setup_verifier(nova_vp_bytes, decider_vp_bytes).unwrap();
+        let wraps_pk = WRAPS::setup_prover(nova_pp_bytes).unwrap();
+        let wraps_vk = WRAPS::setup_verifier(nova_vp_bytes).unwrap();
         println!("Parsed all parameters: {:?}", start.elapsed());
 
         let schnorr_parameters = Schnorr::setup([0u8; 32]).unwrap();
@@ -1182,7 +1100,7 @@ mod tests {
             assert!(Schnorr::verify(&schnorr_parameters, &aggregate_pubkey, &message, &aggregate_signature).unwrap());
 
             let start = std::time::Instant::now();
-            let (next_uncompressed, next_compressed) = WRAPS::construct_wraps_proof(
+            let next_uncompressed = WRAPS::construct_wraps_proof(
                 &wraps_pk,
                 &wraps_vk,
                 &ab_genesis_hash,
@@ -1194,13 +1112,6 @@ mod tests {
                 &even_bitvector(&prev_ab),
             ).expect("WRAPS proof should be created");
             println!("Step {} WRAPS proof creation time: {:?}", i, start.elapsed());
-
-            let compressed_vk_bytes = WRAPS::get_compressed_verification_key_bytes(&wraps_vk).unwrap();
-            let verified = WRAPS::verify_compressed_wraps_proof(
-                &compressed_vk_bytes,
-                &next_compressed
-            ).unwrap();
-            assert!(verified);
 
             prev_ab = next_ab;
             prev_keys = next_keys;
